@@ -35,3 +35,6 @@ behind a narrow port without changing entity behavior.
 Actorpass remains responsible for running exact actor incarnations.
 Behaviorpass, Communication, and Observe provide the lower-level protocols,
 communication, and observation facilities.
+
+The detailed lifecycle, ownership, and correctness contract is documented in
+[`docs/architecture.mdx`](docs/architecture.mdx).

@@ -1,0 +1,396 @@
+---
+title: Architecture
+description: Ownership, lifecycle, and correctness model for the local entity runtime.
+---
+
+# Architecture
+
+Bombay Entity gives a stable logical entity identity to a temporary Actorpass
+incarnation. It owns activation coordination, admission, stable routing,
+draining, passivation, and lifecycle facts. Actorpass owns execution of exact
+incarnations. Applications own behavior construction and any persistence used
+while preparing a behavior.
+
+```text
+CQRS application
+    | commands addressed by EntityId
+    v
+Bombay Entity
+    | activation, admission, routing, draining, passivation
+    v
+Actorpass
+    | exact actor incarnation execution
+    v
+Behaviorpass + Communication + Observe
+```
+
+Repositories, journals, snapshots, aggregate business logic, event
+serialization, projections, business idempotency, distributed discovery, and
+consensus are outside this crate.
+
+## Identity and ownership
+
+`EntityId<I>` names a logical entity. `ActivationId` identifies one activation
+attempt and resulting incarnation. An actor address or reference identifies
+only that exact incarnation and is never the stable entity identity.
+
+Activation IDs are allocated monotonically from a directory-wide namespace and
+must never wrap. Exhaustion is an explicit runtime failure. Inactive entities
+are normally absent from the directory, preventing memory use from growing with
+every entity ever addressed.
+
+Each directory value is an `Arc<Slot>`. A delayed result may change or remove an
+entry only when both conditions hold:
+
+1. the current map value is the same slot allocation; and
+2. the slot still contains the same activation ID.
+
+Slot identity prevents removal after map replacement. Activation identity
+prevents delayed activation, completion, passivation, or termination events
+from affecting a newer incarnation.
+
+## Application and incarnation ports
+
+The application prepares a behavior without exposing persistence concepts to
+the entity runtime:
+
+```rust
+trait EntityDefinition {
+    type Id;
+    type Command;
+    type Behavior;
+    type Error;
+
+    fn prepare(
+        &self,
+        id: &EntityId<Self::Id>,
+    ) -> impl Future<Output = Result<Self::Behavior, Self::Error>> + Send;
+}
+```
+
+Preparation may load state from a repository, construct a new aggregate, use a
+cache, or perform no I/O. Bombay Entity does not distinguish these cases.
+
+The incarnation runtime transactionally initializes and launches the behavior:
+
+```rust
+trait IncarnationRuntime<D: EntityDefinition> {
+    type Endpoint: EntityEndpoint<D::Command>;
+    type Lease: IncarnationLease;
+    type Error;
+
+    fn activate(
+        &self,
+        behavior: D::Behavior,
+    ) -> impl Future<
+        Output = Result<Activated<Self::Endpoint, Self::Lease>, Self::Error>,
+    > + Send;
+}
+```
+
+`activate` returns only after behavior initialization and initialization effects
+succeed, exact-incarnation registration commits, and the initialized event loop
+is launched. Actorpass should expose a focused operation backed by its existing
+provisional typestate; the typestate itself need not become public.
+
+An activated incarnation returns separate capabilities:
+
+```rust
+struct Activated<E, L> {
+    endpoint: E,
+    lease: L,
+}
+
+trait EntityEndpoint<C> {
+    type Error;
+
+    fn deliver(
+        &self,
+        command: C,
+    ) -> impl Future<Output = Result<(), DeliveryFailure<C, Self::Error>>> + Send;
+}
+
+trait IncarnationLease {
+    type Outcome;
+
+    fn request_graceful_retirement(&self);
+    fn force_abort(&self);
+    fn terminated(self) -> impl Future<Output = Self::Outcome> + Send;
+}
+```
+
+The endpoint may be cloned but grants no retirement authority. The affine lease
+owns graceful retirement, forced cancellation, and exact terminal observation.
+The concrete signatures may evolve while this capability separation remains.
+
+Before entity-directory commitment, the endpoint remains private and is not
+reachable through the stable entity API. Raw Actorpass addresses and references
+must not be exposed by that API. If an activation becomes stale before entity
+commitment, the runtime retires the exact returned lease and awaits termination
+before completing cleanup.
+
+## Activation ownership
+
+Activation belongs to the directory, not to the dispatch that discovers the
+inactive entity:
+
+```text
+first dispatch claims Activating(g)
+    -> directory starts an owned activation task
+    -> first and later dispatches become bounded waiters
+    -> preparation constructs the behavior
+    -> incarnation runtime transactionally activates it
+    -> directory validates slot identity and g
+    -> directory commits Active(g, endpoint, lease)
+```
+
+Dropping a dispatch future drops its command and releases only its waiter seat.
+It does not cancel shared activation. A waiter is never transferred silently to
+a later activation ID and the runtime never retries its command automatically.
+
+The directory-owned task must clean up preparation failure, incarnation
+activation failure, stale validation, directory shutdown, panic, and task
+cancellation. No terminal path may strand an `Activating` slot or leak an
+incarnation lease.
+
+## Slot state machine
+
+The external lifecycle is deliberately small:
+
+```text
+Inactive
+  -> Activating(activation_id)
+  -> Active(activation_id, incarnation)
+  -> Draining(activation_id)
+  -> Inactive
+```
+
+Internally, inactive normally means absence from the map:
+
+```text
+Activating {
+    activation_id,
+    bounded_waiters,
+    cancellation,
+}
+
+Active {
+    activation_id,
+    endpoint,
+    lease,
+    reserved_dispatches,
+    last_activity,
+}
+
+Draining {
+    activation_id,
+    endpoint,
+    lease,
+    reserved_dispatches,
+    fence_state,
+    deadline,
+}
+```
+
+Every asynchronous result carries `EntityId` and `ActivationId`. All slot
+transitions validate both slot allocation and activation ID.
+
+## Linearization points
+
+Each entity slot is a linearizable concurrent object. Different slots progress
+independently.
+
+1. **Activation claim:** absence becomes `Activating(g)`.
+2. **Activation commit:** validated `Activating(g)` becomes
+   `Active(g, endpoint, lease)`.
+3. **Dispatch reservation:** `reserved_dispatches` increments while the slot is
+   still `Active(g)`.
+4. **Passivation start:** `Active(g)` becomes `Draining(g)`, atomically closing
+   admission.
+5. **Dispatch resolution:** a reserved delivery either completes enqueue or
+   returns its command, then releases its reservation.
+6. **Fence start:** draining observes zero reservations and begins the ordered
+   fence enqueue.
+7. **Retirement:** successful fence acknowledgement permits graceful retirement.
+8. **Removal:** exact incarnation termination permits compare-slot-and-activation
+   removal.
+
+No directory lock or slot lock is held while awaiting, invoking application or
+actor code, publishing telemetry, consulting a clock, or running policy code.
+
+## Admission and command ownership
+
+Activation waiters and active dispatch reservations have independent bounds.
+Global activation and waiter limits may be added without changing per-slot
+semantics.
+
+A dispatch against `Active(g)` proceeds as follows:
+
+1. reserve one dispatch while holding the slot lock;
+2. release the lock;
+3. deliver the command;
+4. on success, release the reservation after enqueue completes;
+5. on failure, release the reservation and return the original command.
+
+Passivation may start after reservation and before enqueue. The reservation
+makes the drainer wait until that operation either enqueues or fails. Delivery
+errors recover non-`Clone` commands. Activation and draining refusals do the
+same.
+
+The runtime does not retry commands. Reply timeout or caller cancellation does
+not prove that a command was unprocessed. Business idempotency and recovery
+remain application responsibilities.
+
+## Entity processing fence
+
+Bombay Entity initially owns the pure behavior wrapper:
+
+```text
+bombay_entity::EntityBehavior<B>
+    implements Behavior
+    wraps B
+    receives EntityProtocol<B::Msg>
+
+EntityProtocol<C>
+    = Command(C)
+    | DrainFence(FenceReply)
+```
+
+Domain commands are forwarded unchanged. A drain fence leaves inner behavior
+state unchanged and emits only its acknowledgement effect, or guarantees that
+the acknowledgement is the final relevant effect. The design does not infer
+cross-lane ordering between independent effect lanes.
+
+Graceful draining is:
+
+```text
+close admission
+    -> wait for reserved_dispatches == 0
+    -> enqueue fence on the same ordered user lane
+    -> await fence acknowledgement
+    -> request priority graceful retirement
+    -> await exact incarnation termination
+    -> remove matching slot and activation
+```
+
+The proof requires an explicit Bombay Communication premise: every completed
+earlier user-lane enqueue is observed before a subsequently enqueued fence.
+Focused tests must attempt to invert that order under concurrent producers and
+bounded backpressure.
+
+Actorpass interprets a transition's effects before receiving the next event.
+Consequently, a received fence acknowledgement certifies completion of earlier
+command transitions and their interpreted effects. Enqueue success alone does
+not certify processing, and missing acknowledgement proves neither completion
+nor non-completion.
+
+Fence failures are explicit:
+
+```rust
+enum FenceFailure {
+    EnqueueFailed,
+    AcknowledgementDeliveryFailed,
+    AcknowledgementTimeout,
+    IncarnationTerminated,
+}
+```
+
+This wrapper stays in Bombay Entity until another non-entity consumer
+demonstrates that it is a general Behaviorpass capability.
+
+## Graceful and forced draining
+
+Drain policy is explicit:
+
+```rust
+enum DrainPolicy {
+    Graceful,
+    Bounded { timeout: Duration },
+}
+
+enum DrainStage {
+    Reservations,
+    FenceEnqueue,
+    FenceAcknowledgement,
+    Retirement,
+}
+```
+
+Graceful policy waits for the proof sequence without a deadline. Bounded policy
+may force-abort after its deadline and must report the stage at which progress
+stopped.
+
+Forced cancellation before fence acknowledgement has unknown command
+completion: commands may have produced none, some, or all effects. A timeout
+while awaiting termination after successful fence acknowledgement is different:
+command processing is known complete even though actor retirement is stuck.
+Telemetry and outcomes distinguish these cases and never label forced
+retirement as graceful passivation.
+
+## Observation and telemetry
+
+Exact-incarnation termination and stable entity availability are separate
+facts. Observing an incarnation reports the terminal outcome of one activation
+ID. Observing an entity reports directory lifecycle without promising that a
+particular incarnation remains live.
+
+Telemetry publishes activation, admission rejection, draining, fence,
+passivation, forced retirement, failure, and stale-event facts. Telemetry grants
+no entity-control capability and is emitted after state transitions, outside
+locks.
+
+## Correctness invariants
+
+1. At most one activation attempt is owned for an entity ID.
+2. At most one activation is committed and entity-routable for an entity ID.
+3. No endpoint is committed before initialization and initialization effects
+   succeed.
+4. No dispatch reservation begins after draining linearizes.
+5. Fence enqueue begins only after every pre-existing reservation resolves.
+6. Graceful retirement begins only after fence acknowledgement.
+7. Forced retirement is separately classified and makes no false completion
+   claim.
+8. Only matching slot identity and activation ID may transition or remove an
+   entry.
+9. Caller cancellation cannot cancel shared activation or strand slot state.
+10. Application, actor, telemetry, clock, and policy code never run under
+    directory locks.
+
+## First blocking milestone
+
+Implementation begins with a narrow spike, before choosing a directory map or
+broad public API:
+
+1. **Actorpass transactional activation adapter**
+   - prepare provisional resources;
+   - initialize behavior and interpret initialization effects;
+   - commit exact-incarnation registration;
+   - launch the initialized loop;
+   - return separate endpoint and affine lease;
+   - retire and await an incarnation rejected by stale directory validation.
+2. **Pure entity behavior wrapper**
+   - define `EntityProtocol::Command` and `EntityProtocol::DrainFence`;
+   - forward domain commands unchanged;
+   - acknowledge a fence without changing inner state;
+   - prove acknowledgement ordering relative to prior effects.
+3. **One-entity reference slot**
+   - directory-owned single-flight activation;
+   - bounded activation waiters;
+   - dispatch reservation and command recovery;
+   - graceful fence and retirement;
+   - stale activation and termination rejection.
+
+The state machine and reference model remain independent of Actorpass. A
+deterministic fake incarnation runtime drives model, property, cancellation,
+Loom, stress, and fuzz verification before performance specialization.
+
+## Research basis
+
+- [Orleans grain directory](https://learn.microsoft.com/en-us/dotnet/orleans/host/grain-directory)
+- [Orleans virtual actor technical report](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Orleans-MSR-TR-2014-41.pdf)
+- [Apache Pekko Cluster Sharding](https://pekko.apache.org/docs/pekko/1.0.2/typed/cluster-sharding.html)
+- [Akka graceful passivation](https://doc.akka.io/libraries/akka-core/current/typed/cluster-sharding.html)
+- [Dapr actor runtime configuration](https://docs.dapr.io/developing-applications/building-blocks/actors/actors-runtime-config/)
+- [Herlihy and Wing, Linearizability](https://www.cs.cmu.edu/~wing/publications/HerlihyWing90.pdf)
+- [Faster linearizability checking via P-compositionality](https://arxiv.org/abs/1504.00204)
+- [TinyLFU](https://arxiv.org/abs/1512.00727)

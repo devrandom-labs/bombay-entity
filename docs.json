@@ -9,7 +9,7 @@
     "dark": "#0D9373"
   },
   "navigation": {
-    "pages": ["index"]
+    "pages": ["index", "architecture"]
   },
   "navbar": {
     "links": [
