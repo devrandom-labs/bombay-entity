@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/entity"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/devrandom-labs/bombay-entity"
+homepage = "https://github.com/devrandom-labs/bombay-entity"
+
+[workspace.dependencies]
+bombay-entity = { path = "crates/entity" }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

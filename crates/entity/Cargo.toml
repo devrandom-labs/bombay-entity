@@ -1,0 +1,16 @@
+[package]
+name = "bombay-entity"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Local entity activation, lifecycle management, and stable typed routing."
+documentation = "https://docs.rs/bombay-entity"
+readme = "../../README.md"
+keywords = ["actor", "cqrs", "entity", "routing"]
+categories = ["concurrency"]
+
+[lints]
+workspace = true

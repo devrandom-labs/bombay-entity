@@ -1,0 +1,19 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Bombay Entity",
+  "description": "Local entity activation, lifecycle management, and stable typed routing.",
+  "theme": "mint",
+  "colors": {
+    "primary": "#0D9373",
+    "light": "#07C983",
+    "dark": "#0D9373"
+  },
+  "navigation": {
+    "pages": ["index"]
+  },
+  "navbar": {
+    "links": [
+      { "label": "API docs", "href": "https://docs.rs/bombay-entity", "icon": "rust" }
+    ]
+  }
+}
