@@ -6,6 +6,12 @@ use core::ops::Add;
 
 use bombay_transition::{Decision, Reducer};
 
+mod inactive;
+mod retiring;
+
+use inactive::decide_inactive;
+use retiring::decide_retiring;
+
 /// Globally unique identity of one activation attempt and incarnation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ActivationId(NonZeroU64);
@@ -402,6 +408,18 @@ impl<C, E: Clone, L> EntitySlot<C, E, L> {
     pub fn decide(self, event: SlotEvent<C, E, L>) -> SlotDecision<C, E, L> {
         SlotReducer.reduce(self, event)
     }
+
+    /// Fold an ordered stream of facts through this slot.
+    ///
+    /// This is primarily useful to deterministic simulations and reference
+    /// models. A concurrent directory normally installs each individual
+    /// decision at its own linearization point.
+    pub fn decide_all<I>(self, events: I) -> SlotDecision<C, E, L>
+    where
+        I: IntoIterator<Item = SlotEvent<C, E, L>>,
+    {
+        SlotReducer.fold(self, events)
+    }
 }
 
 fn decision<C, E, L>(
@@ -425,42 +443,6 @@ fn reject<C, E, L>(
             reason,
         }),
     )
-}
-
-fn decide_inactive<C, E, L>(event: SlotEvent<C, E, L>) -> SlotDecision<C, E, L> {
-    match event {
-        SlotEvent::ClaimActivation {
-            activation_id,
-            dispatch_id,
-            command,
-            waiter_limit,
-        } => decision(
-            EntitySlot::Activating(ActivatingSlot {
-                activation_id,
-                waiters: vec![ActivationWaiter {
-                    dispatch_id,
-                    command,
-                }],
-                waiter_limit,
-            }),
-            SlotEffectBatch::one(SlotEffect::StartActivation { activation_id }),
-        ),
-        SlotEvent::Dispatch {
-            dispatch_id,
-            command,
-        } => reject(
-            EntitySlot::Inactive,
-            dispatch_id,
-            command,
-            Refusal::Unavailable,
-        ),
-        SlotEvent::ActivationSucceeded {
-            activation_id,
-            lease,
-            ..
-        } => retire_stale(EntitySlot::Inactive, activation_id, lease),
-        _ => decision(EntitySlot::Inactive, SlotEffectBatch::default()),
-    }
 }
 
 fn decide_activating<C, E: Clone, L>(
@@ -821,49 +803,6 @@ fn force_drain<C, E, L>(state: DrainingSlot<E, L>, failure: DrainFailure) -> Slo
             retirement: RetirementMode::Forced(failure),
         }),
     )
-}
-
-fn decide_retiring<C, E, L>(
-    activation_id: ActivationId,
-    event: SlotEvent<C, E, L>,
-) -> SlotDecision<C, E, L> {
-    match event {
-        SlotEvent::Terminated {
-            activation_id: observed,
-        } => match activation_id.classify(observed, ()) {
-            Generation::Current(()) => decision(
-                EntitySlot::Inactive,
-                SlotEffectBatch::one(SlotEffect::Remove { activation_id }),
-            ),
-            Generation::Stale(()) => decision(
-                EntitySlot::Retiring { activation_id },
-                SlotEffectBatch::default(),
-            ),
-        },
-        SlotEvent::Dispatch {
-            dispatch_id,
-            command,
-        }
-        | SlotEvent::ClaimActivation {
-            dispatch_id,
-            command,
-            ..
-        } => reject(
-            EntitySlot::Retiring { activation_id },
-            dispatch_id,
-            command,
-            Refusal::Draining,
-        ),
-        SlotEvent::ActivationSucceeded {
-            activation_id: stale_id,
-            lease,
-            ..
-        } => retire_stale(EntitySlot::Retiring { activation_id }, stale_id, lease),
-        _ => decision(
-            EntitySlot::Retiring { activation_id },
-            SlotEffectBatch::default(),
-        ),
-    }
 }
 
 fn reject_failed_delivery<C, E, L>(
