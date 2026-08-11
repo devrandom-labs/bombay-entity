@@ -51,3 +51,17 @@ P2 sentinels: H08 (DirectoryOutput.dispatch_id Option split), H09 (machine: Opti
   H32 recorded contract-blocked. Loom panic falsifiers infeasible (generator TLS abort) — std-gate tests instead.
 - Final A/B vs baseline: active parity, contended within band, stale -70%. SCORE 994132 -> 994895.
 - Next: second fresh whole-workspace audit; if clean, verify contract items and declare candidate fixed point.
+
+## Contract verification (convergence round 2, in progress)
+- Crate trio/algebra/events/effects/ordering: unchanged; bounded trace enumeration + topology
+  evidence tests green in gate. ReservationCount arithmetic (E02) is semantics-identical.
+- Generation safety / affine ownership / cancellation / reentrancy: covered by stale-*,
+  exact_termination, canceling_dispatch, reentrant_delivery tests — all green.
+- Panic guarantees: E21 removed an undocumented abort, restoring the documented panic-only
+  contract; falsifier aborts without the fix.
+- Booleans: only predicate returns remain (5 tokens, all is_*/contains/handles-style).
+- Errors: all six failure domains thiserror-derived; core::error::Error via default-features=false.
+- no_std/MSRV: transition no_std, workspace 1.96 pinned, gate green.
+- Public surface: LifecycleModel/lifecycle_model, Choice, ActivationWaiter/DrainProgress/
+  ReservationCount removed; DispatchOutput/Passivation/DispatchOutcome added as honest types.
+- Performance: repeated-harness A/B in E24 entry; hot paths at parity, stale callbacks -70%.
