@@ -27,3 +27,15 @@ Raw timing harness (not criterion); single run, noise unquantified — hypothesi
 - Allocation profile (no dhat/tracy harness present)
 - Code size (rlib/text size) and clean compile time
 - Public-surface diff tooling (cargo-public-api not installed)
+
+## Post-E12 repeated-harness baselines (commit b115f38, min/median of 7)
+| workload | min | median |
+|---|---|---|
+| activating_hot_key | 47.72 ms | 48.48 ms |
+| active_hot_key | 90.81 ms | 91.23 ms |
+| independent_keys | 10.18 ms | 10.71 ms |
+| contended_active_key | 181.62 ms | 183.88 ms |
+| ignored_step | 9.80 ms | 10.08 ms |
+| claim_activation_step | 14.77 ms | 15.26 ms |
+
+Decision rule: only deltas >5% on min are decision-grade.
