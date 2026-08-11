@@ -29,9 +29,11 @@ mod protocol;
 pub use bombay_transition::{Decision, Reducer};
 pub use lifecycle::{
     ActivatingSlot, ActivationId, ActivationWaiter, ActiveSlot, DispatchId, DrainFailure,
-    DrainProgress, DrainStage, DrainingSlot, EntitySlot, LifecycleMachine, Refusal,
-    ReservationCount, RetirementMode, SlotDecision, SlotEffect, SlotEffectBatch, SlotEvent,
-    SlotReducer, lifecycle_machine,
+    DrainProgress, DrainStage, DrainingSlot, EntitySlot, LIFECYCLE_TOPOLOGY, LifecycleEdge,
+    LifecycleMachine, LifecycleModel, LifecycleModelInterpreter, LifecycleOutput, LifecyclePhase,
+    LifecycleTopologyError, LifecycleTrigger, Refusal, ReservationCount, RetirementMode,
+    SlotDecision, SlotEffect, SlotEffectBatch, SlotEvent, SlotReducer, TransitionEvidence,
+    lifecycle_machine, validate_lifecycle_topology,
 };
 pub use protocol::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
 

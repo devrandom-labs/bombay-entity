@@ -13,7 +13,11 @@ mod retiring;
 use inactive::decide_inactive;
 use retiring::decide_retiring;
 
-pub use machine::{LifecycleMachine, lifecycle_machine};
+pub use machine::{
+    LIFECYCLE_TOPOLOGY, LifecycleEdge, LifecycleMachine, LifecycleModel, LifecycleModelInterpreter,
+    LifecycleOutput, LifecyclePhase, LifecycleTopologyError, LifecycleTrigger, TransitionEvidence,
+    lifecycle_machine, validate_lifecycle_topology,
+};
 
 /// Globally unique identity of one activation attempt and incarnation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -407,6 +411,18 @@ impl<C, E: Clone, L> Reducer<EntitySlot<C, E, L>, SlotEvent<C, E, L>> for SlotRe
 }
 
 impl<C, E: Clone, L> EntitySlot<C, E, L> {
+    /// Return the compact lifecycle phase represented by this state.
+    #[must_use]
+    pub const fn phase(&self) -> LifecyclePhase {
+        match self {
+            Self::Inactive => LifecyclePhase::Inactive,
+            Self::Activating(_) => LifecyclePhase::Activating,
+            Self::Active(_) => LifecyclePhase::Active,
+            Self::Draining(_) => LifecyclePhase::Draining,
+            Self::Retiring { .. } => LifecyclePhase::Retiring,
+        }
+    }
+
     /// Consume one fact and return the next state plus an effect batch.
     pub fn decide(self, event: SlotEvent<C, E, L>) -> SlotDecision<C, E, L> {
         SlotReducer.reduce(self, event)
@@ -422,6 +438,59 @@ impl<C, E: Clone, L> EntitySlot<C, E, L> {
         I: IntoIterator<Item = SlotEvent<C, E, L>>,
     {
         SlotReducer.fold(self, events)
+    }
+}
+
+impl<C, E, L> SlotEvent<C, E, L> {
+    const fn trigger(&self) -> LifecycleTrigger {
+        match self {
+            Self::ClaimActivation { .. } => LifecycleTrigger::ClaimActivation,
+            Self::Dispatch { .. } => LifecycleTrigger::Dispatch,
+            Self::CancelWaiter { .. } => LifecycleTrigger::CancelWaiter,
+            Self::ActivationSucceeded { .. } => LifecycleTrigger::ActivationSucceeded,
+            Self::ActivationFailed { .. } => LifecycleTrigger::ActivationFailed,
+            Self::DeliveryResolved { .. } => LifecycleTrigger::DeliveryResolved,
+            Self::BeginDrain { .. } => LifecycleTrigger::BeginDrain,
+            Self::FenceAcknowledged { .. } => LifecycleTrigger::FenceAcknowledged,
+            Self::ForceDrain { .. } => LifecycleTrigger::ForceDrain,
+            Self::Terminated { .. } => LifecycleTrigger::Terminated,
+        }
+    }
+}
+
+impl<C, E, L> EntitySlot<C, E, L> {
+    fn handles(&self, event: &SlotEvent<C, E, L>) -> bool {
+        match (self, event) {
+            (Self::Inactive, SlotEvent::Dispatch { .. })
+            | (
+                Self::Activating(_) | Self::Active(_) | Self::Draining(_) | Self::Retiring { .. },
+                SlotEvent::Dispatch { .. } | SlotEvent::ClaimActivation { .. },
+            ) => true,
+            (
+                Self::Activating(state),
+                SlotEvent::CancelWaiter { activation_id, .. }
+                | SlotEvent::ActivationSucceeded { activation_id, .. }
+                | SlotEvent::ActivationFailed { activation_id },
+            ) => state.activation_id == *activation_id,
+            (
+                Self::Active(state),
+                SlotEvent::DeliveryResolved { activation_id, .. }
+                | SlotEvent::BeginDrain { activation_id },
+            ) => state.activation_id == *activation_id,
+            (
+                Self::Draining(state),
+                SlotEvent::DeliveryResolved { activation_id, .. }
+                | SlotEvent::FenceAcknowledged { activation_id }
+                | SlotEvent::ForceDrain { activation_id, .. },
+            ) => state.activation_id == *activation_id,
+            (
+                Self::Retiring { activation_id },
+                SlotEvent::Terminated {
+                    activation_id: observed,
+                },
+            ) => activation_id == observed,
+            _ => false,
+        }
     }
 }
 
@@ -945,6 +1014,69 @@ mod tests {
         assert!(
             matches!(stale.effects.as_slice(), [SlotEffect::Retire { activation_id, .. }] if *activation_id == activation(4))
         );
+    }
+
+    #[test]
+    fn stale_termination_cannot_remove_newer_incarnation() {
+        let retiring = EntitySlot::<u8, u8, u8>::Retiring {
+            activation_id: activation(7),
+        };
+        let stale = retiring.decide(SlotEvent::Terminated {
+            activation_id: activation(6),
+        });
+        assert!(matches!(
+            stale.state,
+            EntitySlot::Retiring { activation_id } if activation_id == activation(7)
+        ));
+        assert!(stale.effects.as_slice().is_empty());
+    }
+
+    #[test]
+    fn draining_never_reopens_admission() {
+        let draining = EntitySlot::<u8, u8, u8>::Draining(super::DrainingSlot {
+            activation_id: activation(3),
+            endpoint: 3,
+            lease: 3,
+            progress: super::DrainProgress::FenceAcknowledgement,
+        });
+        let refused = draining.decide(SlotEvent::Dispatch {
+            dispatch_id: DispatchId(8),
+            command: 9,
+        });
+        assert!(matches!(refused.state, EntitySlot::Draining(_)));
+        assert!(matches!(
+            refused.effects.as_slice(),
+            [SlotEffect::Reject {
+                reason: Refusal::Draining,
+                command: 9,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn activation_failure_preserves_waiter_order_before_removal() {
+        let first = EntitySlot::<u8, u8, u8>::Inactive.decide(SlotEvent::ClaimActivation {
+            activation_id: activation(1),
+            dispatch_id: DispatchId(1),
+            command: 10,
+            waiter_limit: NonZeroUsize::new(2).unwrap(),
+        });
+        let second = first.state.decide(SlotEvent::Dispatch {
+            dispatch_id: DispatchId(2),
+            command: 20,
+        });
+        let failed = second.state.decide(SlotEvent::ActivationFailed {
+            activation_id: activation(1),
+        });
+        assert!(matches!(
+            failed.effects.as_slice(),
+            [
+                SlotEffect::Reject { dispatch_id: DispatchId(1), command: 10, .. },
+                SlotEffect::Reject { dispatch_id: DispatchId(2), command: 20, .. },
+                SlotEffect::Remove { activation_id }
+            ] if *activation_id == activation(1)
+        ));
     }
 
     #[test]

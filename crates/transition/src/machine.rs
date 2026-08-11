@@ -1,14 +1,33 @@
 //! Statically composed, structurally representable executable machines.
 
+/// Compact identity of a topology vertex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VertexId(pub u8);
+
+/// Compact identity of an input trigger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TriggerId(pub u8);
+
+/// One named topology vertex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Vertex {
+    /// Identity used by execution and structural interpreters.
+    pub id: VertexId,
+    /// Human-readable label used only by renderers.
+    pub label: &'static str,
+}
+
 /// One declared edge in a base machine's topology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Transition {
-    /// Source vertex label.
-    pub from: &'static str,
-    /// Input label selecting the edge.
-    pub input: &'static str,
-    /// Destination vertex label.
-    pub to: &'static str,
+    /// Source vertex identity.
+    pub from: VertexId,
+    /// Input identity selecting the edge.
+    pub trigger: TriggerId,
+    /// Destination vertex identity.
+    pub to: VertexId,
+    /// Human-readable trigger label used only by renderers.
+    pub label: &'static str,
 }
 
 /// Inspectable metadata for one indivisible machine.
@@ -16,8 +35,101 @@ pub struct Transition {
 pub struct Topology {
     /// Stable component name.
     pub name: &'static str,
+    /// Initial vertex.
+    pub initial: VertexId,
+    /// Declared vertices.
+    pub vertices: &'static [Vertex],
     /// Declared transition graph.
     pub transitions: &'static [Transition],
+}
+
+/// Structural defect found in a topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyError {
+    /// Two vertices have the same identity.
+    DuplicateVertex(VertexId),
+    /// Two edges have identical typed endpoints and trigger.
+    DuplicateTransition(Transition),
+    /// The initial identity is not a declared vertex.
+    UnknownInitial(VertexId),
+    /// An edge refers to an undeclared vertex.
+    UnknownVertex(VertexId),
+    /// A declared vertex cannot be reached from the initial vertex.
+    UnreachableVertex(VertexId),
+}
+
+impl Topology {
+    /// Validate identity uniqueness, references, initial state, and reachability.
+    ///
+    /// Validation uses fixed stack storage because vertex identities are bytes;
+    /// it performs no allocation and is suitable for `no_std` interpreters.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first uniqueness, reference, initial-state, or reachability
+    /// defect encountered in deterministic declaration order.
+    pub fn validate(self) -> Result<(), TopologyError> {
+        for (index, vertex) in self.vertices.iter().enumerate() {
+            if self.vertices[..index]
+                .iter()
+                .any(|known| known.id == vertex.id)
+            {
+                return Err(TopologyError::DuplicateVertex(vertex.id));
+            }
+        }
+        if !self.vertices.iter().any(|vertex| vertex.id == self.initial) {
+            return Err(TopologyError::UnknownInitial(self.initial));
+        }
+        for (index, edge) in self.transitions.iter().enumerate() {
+            if self.transitions[..index].contains(edge) {
+                return Err(TopologyError::DuplicateTransition(*edge));
+            }
+            for vertex in [edge.from, edge.to] {
+                if !self.vertices.iter().any(|known| known.id == vertex) {
+                    return Err(TopologyError::UnknownVertex(vertex));
+                }
+            }
+        }
+        let mut reachable = [false; 256];
+        reachable[usize::from(self.initial.0)] = true;
+        for _ in 0..self.vertices.len() {
+            for edge in self.transitions {
+                if reachable[usize::from(edge.from.0)] {
+                    reachable[usize::from(edge.to.0)] = true;
+                }
+            }
+        }
+        self.vertices
+            .iter()
+            .find(|vertex| !reachable[usize::from(vertex.id.0)])
+            .map_or(Ok(()), |vertex| {
+                Err(TopologyError::UnreachableVertex(vertex.id))
+            })
+    }
+
+    /// Render a deterministic Mermaid state diagram into any formatting sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns a formatting error from the sink or when an edge references an
+    /// unknown vertex. [`Self::validate`] diagnoses the latter precisely.
+    pub fn write_mermaid(self, output: &mut impl core::fmt::Write) -> core::fmt::Result {
+        writeln!(output, "stateDiagram-v2")?;
+        let initial = self.label(self.initial).ok_or(core::fmt::Error)?;
+        writeln!(output, "    [*] --> {initial}")?;
+        self.transitions.iter().try_for_each(|edge| {
+            let from = self.label(edge.from).ok_or(core::fmt::Error)?;
+            let to = self.label(edge.to).ok_or(core::fmt::Error)?;
+            writeln!(output, "    {from} --> {to}: {}", edge.label)
+        })
+    }
+
+    fn label(self, id: VertexId) -> Option<&'static str> {
+        self.vertices
+            .iter()
+            .find(|vertex| vertex.id == id)
+            .map(|vertex| vertex.label)
+    }
 }
 
 /// A stateful transducer whose composition remains structurally inspectable.
@@ -208,17 +320,44 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{Base, Compose, Machine, Structure, Topology, Transition};
+    use super::{
+        Base, Compose, Machine, Structure, Topology, Transition, TriggerId, Vertex, VertexId,
+    };
+
+    const READY: VertexId = VertexId(0);
+    const VERTICES: &[Vertex] = &[Vertex {
+        id: READY,
+        label: "ready",
+    }];
 
     const EDGES: &[Transition] = &[Transition {
-        from: "ready",
-        input: "advance",
-        to: "ready",
+        from: READY,
+        trigger: TriggerId(0),
+        to: READY,
+        label: "advance",
     }];
+    const UNKNOWN: VertexId = VertexId(9);
+    const UNKNOWN_EDGE: &[Transition] = &[Transition {
+        from: READY,
+        trigger: TriggerId(1),
+        to: UNKNOWN,
+        label: "lost",
+    }];
+    const STRANDED: VertexId = VertexId(1);
+    const STRANDED_VERTICES: &[Vertex] = &[
+        VERTICES[0],
+        Vertex {
+            id: STRANDED,
+            label: "stranded",
+        },
+    ];
+    const DUPLICATE_EDGES: &[Transition] = &[EDGES[0], EDGES[0]];
 
     fn topology(name: &'static str) -> Topology {
         Topology {
             name,
+            initial: READY,
+            vertices: VERTICES,
             transitions: EDGES,
         }
     }
@@ -294,6 +433,74 @@ mod tests {
                 products: 0,
                 choices: 0,
             }
+        );
+    }
+
+    #[test]
+    fn topology_validation_rejects_each_structural_defect() {
+        const DUPLICATE_VERTICES: &[Vertex] = &[
+            Vertex {
+                id: READY,
+                label: "ready",
+            },
+            Vertex {
+                id: READY,
+                label: "again",
+            },
+        ];
+        assert_eq!(
+            Topology {
+                name: "duplicate",
+                initial: READY,
+                vertices: DUPLICATE_VERTICES,
+                transitions: &[]
+            }
+            .validate(),
+            Err(super::TopologyError::DuplicateVertex(READY))
+        );
+
+        assert_eq!(
+            Topology {
+                name: "initial",
+                initial: UNKNOWN,
+                vertices: VERTICES,
+                transitions: &[]
+            }
+            .validate(),
+            Err(super::TopologyError::UnknownInitial(UNKNOWN))
+        );
+
+        assert_eq!(
+            Topology {
+                name: "reference",
+                initial: READY,
+                vertices: VERTICES,
+                transitions: UNKNOWN_EDGE
+            }
+            .validate(),
+            Err(super::TopologyError::UnknownVertex(UNKNOWN))
+        );
+
+        assert_eq!(
+            Topology {
+                name: "reachability",
+                initial: READY,
+                vertices: STRANDED_VERTICES,
+                transitions: &[]
+            }
+            .validate(),
+            Err(super::TopologyError::UnreachableVertex(STRANDED))
+        );
+
+        assert_eq!(
+            Topology {
+                name: "edge",
+                initial: READY,
+                vertices: VERTICES,
+                transitions: DUPLICATE_EDGES
+            }
+            .validate(),
+            Err(super::TopologyError::DuplicateTransition(EDGES[0]))
         );
     }
 }

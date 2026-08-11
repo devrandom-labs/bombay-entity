@@ -29,7 +29,8 @@
 mod machine;
 
 pub use machine::{
-    Base, Choice, Compose, Either, Machine, Product, Structure, Then, Topology, Transition,
+    Base, Choice, Compose, Either, Machine, Product, Structure, Then, Topology, TopologyError,
+    Transition, TriggerId, Vertex, VertexId,
 };
 
 /// The value produced by one deterministic reduction.
