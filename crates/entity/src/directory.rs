@@ -217,51 +217,49 @@ where
     ///
     /// # Panics
     ///
-    /// Panics after a synchronization poison or an internal ownership invariant
-    /// violation. Neither can be recovered without risking lifecycle corruption.
+    /// Panics after a synchronization poison, which cannot be recovered without
+    /// risking lifecycle corruption.
     pub fn dispatch(
         &self,
         entity_id: EntityId<I>,
         command: C,
     ) -> Result<DispatchOutput<I, C, E, L>, DirectoryError<C>> {
-        let mut command = Some(command);
-        let dispatch_id = match allocate(&self.next_dispatch) {
-            Some(value) => DispatchId(value.get()),
-            None => {
-                return Err(DirectoryError::DispatchIdsExhausted(
-                    command.take().expect("command present"),
-                ));
-            }
+        let Some(dispatch_sequence) = allocate(&self.next_dispatch) else {
+            return Err(DirectoryError::DispatchIdsExhausted(command));
         };
+        let dispatch_id = DispatchId(dispatch_sequence.get());
         let shard = &self.shards[self.shard_index(&entity_id)];
-        let (slot, output) = {
-            let mut entries = shard.lock().expect("directory shard lock poisoned");
-            if let Some(slot) = entries.get(&entity_id) {
-                (Arc::clone(slot), None)
-            } else {
-                let Some(sequence) = allocate(&self.next_activation) else {
-                    return Err(DirectoryError::ActivationIdsExhausted(
-                        command.take().expect("command present"),
-                    ));
-                };
-                let activation_id = ActivationId::new(sequence);
-                let slot = Arc::new(Slot::new());
-                let installed = slot.submit(SlotEvent::ClaimActivation {
-                    activation_id,
-                    dispatch_id,
-                    command: command.take().expect("command present"),
-                    waiter_limit: self.waiter_limit,
-                });
-                entries.insert(entity_id.clone(), Arc::clone(&slot));
-                (slot, Some(installed))
-            }
-        };
-        let installed = output.unwrap_or_else(|| {
-            slot.submit(SlotEvent::Dispatch {
+        let mut entries = shard.lock().expect("directory shard lock poisoned");
+        if let Some(slot) = entries.get(&entity_id) {
+            let slot = Arc::clone(slot);
+            drop(entries);
+            let installed = slot.submit(SlotEvent::Dispatch {
                 dispatch_id,
-                command: command.take().expect("command present"),
-            })
+                command,
+            });
+            return Ok(DispatchOutput {
+                dispatch_id,
+                output: directory_output(
+                    entity_id,
+                    installed.evidence,
+                    installed.activation_id,
+                    slot,
+                ),
+            });
+        }
+        let Some(activation_sequence) = allocate(&self.next_activation) else {
+            return Err(DirectoryError::ActivationIdsExhausted(command));
+        };
+        let activation_id = ActivationId::new(activation_sequence);
+        let slot = Arc::new(Slot::new());
+        let installed = slot.submit(SlotEvent::ClaimActivation {
+            activation_id,
+            dispatch_id,
+            command,
+            waiter_limit: self.waiter_limit,
         });
+        entries.insert(entity_id.clone(), Arc::clone(&slot));
+        drop(entries);
         Ok(DispatchOutput {
             dispatch_id,
             output: directory_output(entity_id, installed.evidence, installed.activation_id, slot),
