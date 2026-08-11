@@ -651,4 +651,38 @@ mod loom_tests {
             ));
         });
     }
+
+    #[test]
+    fn real_serialized_executor_poison_resolves_every_outstanding_receipt() {
+        loom::model(|| {
+            let machine = Base::new((), TOPOLOGY.validated().unwrap(), |(), input| (input, ()));
+            let executor = Arc::new(SerializedExecutor::new(machine));
+
+            let bystander = {
+                let executor = Arc::clone(&executor);
+                thread::spawn(move || {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        // The drain owner's handler runs every queued turn, so
+                        // the panic on output 2 can surface in either thread.
+                        if let Ok(receipt) = executor.submit(1, &|output| assert_ne!(output, 2)) {
+                            let _ = receipt.wait();
+                        }
+                    }))
+                })
+            };
+            let _poison_panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Ok(receipt) = executor.submit(2, &|output| assert_ne!(output, 2)) {
+                    let _ = receipt.wait();
+                }
+            }));
+            let _ = bystander.join().unwrap();
+
+            // Output 2 is handled under every schedule, so the handler panic
+            // always poisons the executor; rejection proves it.
+            assert!(matches!(
+                executor.submit(3, &|_| {}),
+                Err(super::PoisonedInput(3))
+            ));
+        });
+    }
 }

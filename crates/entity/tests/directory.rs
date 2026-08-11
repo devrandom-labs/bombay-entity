@@ -314,3 +314,115 @@ fn stale_termination_cannot_remove_the_live_incarnation() {
             .any(|action| matches!(action, Action::Deliver(_, 9)))
     );
 }
+
+#[test]
+fn failed_activation_rejects_waiters_and_allows_fresh_activation() {
+    let directory = Directory::new(DirectoryConfig::default()).unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(21);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, &runtime);
+    directory.interpret(directory.dispatch(entity_id, 2).unwrap().output, &runtime);
+    let Action::Start(failed) = runtime.0.lock().unwrap()[0] else {
+        panic!("activation not started");
+    };
+
+    directory.interpret(directory.activation_failed(&entity_id, failed), &runtime);
+
+    {
+        let actions = runtime.0.lock().unwrap();
+        assert!(matches!(
+            actions[1],
+            Action::Reject(_, 1, Refusal::Unavailable)
+        ));
+        assert!(matches!(
+            actions[2],
+            Action::Reject(_, 2, Refusal::Unavailable)
+        ));
+    }
+    assert!(directory.is_empty());
+
+    directory.interpret(directory.dispatch(entity_id, 3).unwrap().output, &runtime);
+    let actions = runtime.0.lock().unwrap();
+    let Some(Action::Start(replacement)) = actions.last() else {
+        panic!("replacement activation not started");
+    };
+    assert_ne!(failed, *replacement);
+}
+
+#[test]
+fn bounded_activation_waiters_reject_excess_with_busy() {
+    let directory = Directory::new(DirectoryConfig {
+        shards: NonZeroUsize::new(8).unwrap(),
+        activation_waiters: NonZeroUsize::MIN,
+    })
+    .unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(24);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, &runtime);
+
+    directory.interpret(directory.dispatch(entity_id, 2).unwrap().output, &runtime);
+
+    let actions = runtime.0.lock().unwrap();
+    assert_eq!(actions.len(), 2);
+    assert!(matches!(actions[0], Action::Start(_)));
+    assert!(matches!(actions[1], Action::Reject(_, 2, Refusal::Busy)));
+}
+
+#[test]
+fn graceful_retirement_waits_for_fence_acknowledgement() {
+    let directory = Directory::new(DirectoryConfig::default()).unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(23);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, &runtime);
+    let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
+        panic!("activation not started");
+    };
+    directory.interpret(
+        directory.activation_succeeded(&entity_id, activation_id, 2, 3),
+        &runtime,
+    );
+    directory.interpret(
+        directory.delivery_resolved(&entity_id, activation_id, None),
+        &runtime,
+    );
+
+    directory.interpret(directory.begin_drain(&entity_id, activation_id), &runtime);
+    {
+        let actions = runtime.0.lock().unwrap();
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, Action::Fence(id) if *id == activation_id))
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::Retire(..)))
+        );
+    }
+
+    directory.interpret(directory.terminated(&entity_id, activation_id), &runtime);
+    assert_eq!(directory.len(), 1);
+    {
+        let actions = runtime.0.lock().unwrap();
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::Retire(..)))
+        );
+    }
+
+    directory.interpret(
+        directory.fence_acknowledged(&entity_id, activation_id),
+        &runtime,
+    );
+    {
+        let actions = runtime.0.lock().unwrap();
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::Retire(id, _, RetirementMode::Graceful) if *id == activation_id
+        )));
+    }
+    directory.interpret(directory.terminated(&entity_id, activation_id), &runtime);
+    assert!(directory.is_empty());
+}

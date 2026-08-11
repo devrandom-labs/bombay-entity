@@ -159,3 +159,56 @@ fn canceled_waiter_and_activation_completion_drop_command_once() {
         assert_eq!(drops.load(Ordering::Relaxed), 1);
     });
 }
+
+fn try_deliver(admission: &Arc<Mutex<Admission>>) -> bool {
+    let admitted = {
+        let mut state = admission.lock().unwrap();
+        if state.closed {
+            false
+        } else {
+            state.reservations += 1;
+            true
+        }
+    };
+    if admitted {
+        thread::yield_now();
+        let mut state = admission.lock().unwrap();
+        state.reservations -= 1;
+        if state.closed && state.reservations == 0 {
+            state.fence_enqueued = true;
+        }
+    }
+    admitted
+}
+
+#[test]
+fn reservations_racing_drain_close_resolve_before_the_fence() {
+    loom::model(|| {
+        let admission = Arc::new(Mutex::new(Admission::default()));
+        let first = {
+            let admission = Arc::clone(&admission);
+            thread::spawn(move || try_deliver(&admission))
+        };
+        let second = {
+            let admission = Arc::clone(&admission);
+            thread::spawn(move || try_deliver(&admission))
+        };
+        let drain = {
+            let admission = Arc::clone(&admission);
+            thread::spawn(move || {
+                let mut state = admission.lock().unwrap();
+                state.closed = true;
+                if state.reservations == 0 {
+                    state.fence_enqueued = true;
+                }
+            })
+        };
+        first.join().unwrap();
+        second.join().unwrap();
+        drain.join().unwrap();
+        let state = admission.lock().unwrap();
+        assert!(state.closed);
+        assert_eq!(state.reservations, 0);
+        assert!(state.fence_enqueued);
+    });
+}

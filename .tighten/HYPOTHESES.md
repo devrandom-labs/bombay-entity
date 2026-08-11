@@ -64,11 +64,11 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 - H20 protocol: REJECTED — cold path, port-mandated..rs:139 vec![] per fence ack — rare path; likely reject after measurement.
 
 ## P5 — verification backfill (tests only, semantics untouched)
-- H21 init/preparation failure → Inactive cleanup test (doc invariant 3).
-- H22 reservation-start vs BeginDrain race loom test (invariant 4).
-- H23 graceful retirement blocked pre-ack negative test (invariant 6).
-- H24 Refusal::Busy bounded admission test; FenceFailure variant tests.
-- H25 executor poison-path loom models.
+- H21: KEPT (E17).init/preparation failure → Inactive cleanup test (doc invariant 3).
+- H22: KEPT (E17).reservation-start vs BeginDrain race loom test (invariant 4).
+- H23: KEPT (E17).graceful retirement blocked pre-ack negative test (invariant 6).
+- H24: KEPT (E17).Refusal::Busy bounded admission test; FenceFailure variant tests.
+- H25: KEPT (E17).executor poison-path loom models.
 - H26 bench methodology: KEPT (E12).: benches are single-run raw timing; add repetition/noise bounds before
   accepting ANY perf hypothesis (prerequisite for P3/P4).
 
