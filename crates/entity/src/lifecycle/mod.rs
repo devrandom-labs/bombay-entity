@@ -14,9 +14,9 @@ use inactive::decide_inactive;
 use retiring::decide_retiring;
 
 pub use machine::{
-    LIFECYCLE_TOPOLOGY, LifecycleEdge, LifecycleMachine, LifecycleModel, LifecycleOutput,
-    LifecyclePhase, LifecycleTopologyError, LifecycleTrigger, TransitionEvidence,
-    lifecycle_machine, lifecycle_model, validate_lifecycle_topology,
+    LIFECYCLE_TOPOLOGY, LifecycleEdge, LifecycleMachine, LifecycleOutput, LifecyclePhase,
+    LifecycleTopologyError, LifecycleTrigger, TransitionEvidence, lifecycle_machine,
+    validate_lifecycle_topology,
 };
 
 /// Globally unique identity of one activation attempt and incarnation.

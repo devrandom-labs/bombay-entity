@@ -19,3 +19,6 @@
 {"id":"E09b","hypothesis":"H09","status":"rejected-at-analysis","result":"Option<M> is canonical moved-out encoding; exclusivity already enforced by E07 sum types","finished":"2026-08-11"}
 {"id":"E10","hypothesis":"H10","change":"remove Choice=Routed alias and re-export","falsifier":"any in-workspace consumer breaks","rollback":"git revert","status":"started","started":"2026-08-11"}
 {"id":"E10b","hypothesis":"H12","status":"rejected-by-contract","result":"SelfLoop vs Ignored evidence taxonomy is finalized semantics; merging would reinterpret the algebra","finished":"2026-08-11"}
+{"id":"E10","hypothesis":"H10","status":"kept","result":"Choice alias removed; no consumers; gate green; SCORE 994889","finished":"2026-08-11"}
+{"id":"E11","hypothesis":"H11","change":"remove LifecycleModel/lifecycle_model; typed check moves to LifecycleEdge::is_declared; tests use LIFECYCLE_TOPOLOGY directly","falsifier":"any capability the model provided is unavailable from Topology + is_declared","rollback":"git revert","migration":"model.vertices()->LIFECYCLE_TOPOLOGY.vertices; model.contains(e)->e.is_declared()","status":"started","started":"2026-08-11"}
+{"id":"E11","hypothesis":"H11","status":"kept","result":"LifecycleModel/lifecycle_model removed; LifecycleEdge::is_declared added; bounded trace test preserved; 48/48; gate green; SCORE 994929","finished":"2026-08-11"}
