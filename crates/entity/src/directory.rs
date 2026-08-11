@@ -7,10 +7,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bombay_machine_executor::{LinearizedExecutor, OutputEvidence};
+use bombay_transition::Machine;
 
 use crate::{
     ActivationId, DispatchId, DrainFailure, EntityId, LifecycleMachine, LifecycleOutput, Refusal,
-    RetirementMode, SlotEffect, SlotEvent, TransitionEvidence, lifecycle_machine,
+    RetirementMode, SlotEffect, SlotEffectBatch, SlotEvent, TransitionEvidence, lifecycle_machine,
 };
 
 /// Fixed sizing and admission limits for a local directory.
@@ -83,7 +84,17 @@ pub struct DirectoryOutput<I, C, E, L> {
     pub evidence: TransitionEvidence,
     pub(crate) activation_id: Option<ActivationId>,
     entity_id: EntityId<I>,
-    slot: Arc<Slot<C, E, L>>,
+    target: OutputTarget<C, E, L>,
+}
+
+/// Where an installed decision's effects await interpretation.
+enum OutputTarget<C, E, L> {
+    /// A directory-mapped slot with queued effects.
+    Mapped(Arc<Slot<C, E, L>>),
+    /// Effects already resolved for an event addressed to an absent entry.
+    /// Boxed: the cold variant stays off the mapped output's move path
+    /// (measured: inline costs the active dispatch path ~8%).
+    Transient(Box<SlotEffectBatch<C, E, L>>),
 }
 
 /// The installed decision for one dispatched command, with its guaranteed
@@ -228,7 +239,7 @@ where
                     entity_id,
                     installed.evidence,
                     installed.activation_id,
-                    slot,
+                    OutputTarget::Mapped(slot),
                 ),
             });
         }
@@ -247,7 +258,12 @@ where
         drop(entries);
         Ok(DispatchOutput {
             dispatch_id,
-            output: directory_output(entity_id, installed.evidence, installed.activation_id, slot),
+            output: directory_output(
+                entity_id,
+                installed.evidence,
+                installed.activation_id,
+                OutputTarget::Mapped(slot),
+            ),
         })
     }
 
@@ -391,20 +407,18 @@ where
             .expect("directory shard lock poisoned")
             .get(entity_id)
             .cloned();
-        let (slot, installed) = if let Some(slot) = slot {
+        if let Some(slot) = slot {
             let installed = slot.submit(event);
-            (slot, installed)
-        } else {
-            let slot = Arc::new(Slot::new());
-            let installed = slot.submit(event);
-            (slot, installed)
-        };
-        directory_output(
-            entity_id.clone(),
-            installed.evidence,
-            installed.activation_id,
-            slot,
-        )
+            return directory_output(
+                entity_id.clone(),
+                installed.evidence,
+                installed.activation_id,
+                OutputTarget::Mapped(slot),
+            );
+        }
+        // No entry: reduce the event on a stack-resident machine instead of
+        // allocating a slot that would be discarded after interpretation.
+        submit_absent(entity_id.clone(), event)
     }
 
     /// Interpret all effects queued for the output's stable slot.
@@ -417,47 +431,72 @@ where
         R: EffectInterpreter<I, C, E, L>,
     {
         let DirectoryOutput {
-            entity_id, slot, ..
+            entity_id, target, ..
         } = output;
-        slot.lifecycle
-            .dispatch_pending(&|output: LifecycleOutput<C, E, L>| {
-                output.effects.for_each(|effect| match effect {
-                    SlotEffect::StartActivation { activation_id } => {
-                        runtime.start_activation(entity_id.clone(), activation_id);
-                    }
-                    SlotEffect::Deliver {
-                        activation_id,
-                        dispatch_id,
-                        endpoint,
-                        command,
-                    } => runtime.deliver(
-                        entity_id.clone(),
-                        activation_id,
-                        dispatch_id,
-                        endpoint,
-                        command,
-                    ),
-                    SlotEffect::Reject {
-                        dispatch_id,
-                        command,
-                        reason,
-                    } => runtime.reject(dispatch_id, command, reason),
-                    SlotEffect::EnqueueFence {
-                        activation_id,
-                        endpoint,
-                    } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
-                    SlotEffect::Retire {
-                        activation_id,
-                        lease,
-                        retirement,
-                    } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
-                    // A mapped slot never acquires a second activation, so
-                    // pointer identity is the exact removal authority.
-                    SlotEffect::Remove { .. } => {
-                        self.remove_matching(&entity_id, &slot);
-                    }
-                });
-            });
+        match target {
+            OutputTarget::Mapped(slot) => {
+                slot.lifecycle
+                    .dispatch_pending(&|output: LifecycleOutput<C, E, L>| {
+                        output.effects.for_each(|effect| {
+                            self.apply_effect(&entity_id, Some(&slot), effect, runtime);
+                        });
+                    });
+            }
+            OutputTarget::Transient(effects) => {
+                effects.for_each(|effect| self.apply_effect(&entity_id, None, effect, runtime));
+            }
+        }
+    }
+
+    #[inline]
+    fn apply_effect<R>(
+        &self,
+        entity_id: &EntityId<I>,
+        slot: Option<&Arc<Slot<C, E, L>>>,
+        effect: SlotEffect<C, E, L>,
+        runtime: &R,
+    ) where
+        R: EffectInterpreter<I, C, E, L>,
+    {
+        match effect {
+            SlotEffect::StartActivation { activation_id } => {
+                runtime.start_activation(entity_id.clone(), activation_id);
+            }
+            SlotEffect::Deliver {
+                activation_id,
+                dispatch_id,
+                endpoint,
+                command,
+            } => runtime.deliver(
+                entity_id.clone(),
+                activation_id,
+                dispatch_id,
+                endpoint,
+                command,
+            ),
+            SlotEffect::Reject {
+                dispatch_id,
+                command,
+                reason,
+            } => runtime.reject(dispatch_id, command, reason),
+            SlotEffect::EnqueueFence {
+                activation_id,
+                endpoint,
+            } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
+            SlotEffect::Retire {
+                activation_id,
+                lease,
+                retirement,
+            } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
+            // A mapped slot never acquires a second activation, so pointer
+            // identity is the exact removal authority. A transient decision
+            // belongs to no mapped slot, so its Remove cannot match anything.
+            SlotEffect::Remove { .. } => {
+                if let Some(slot) = slot {
+                    self.remove_matching(entity_id, slot);
+                }
+            }
+        }
     }
 
     fn remove_matching(&self, entity_id: &EntityId<I>, slot: &Arc<Slot<C, E, L>>) {
@@ -504,16 +543,32 @@ fn allocate(sequence: &AtomicU64) -> Option<NonZeroU64> {
         .and_then(NonZeroU64::new)
 }
 
+/// Reduce an event addressed to an absent entry on a stack-resident machine.
+#[cold]
+#[inline(never)]
+fn submit_absent<I, C, E: Clone, L>(
+    entity_id: EntityId<I>,
+    event: SlotEvent<C, E, L>,
+) -> DirectoryOutput<I, C, E, L> {
+    let (output, _) = lifecycle_machine().step(event);
+    directory_output(
+        entity_id,
+        output.evidence,
+        output.activation_id,
+        OutputTarget::Transient(Box::new(output.effects)),
+    )
+}
+
 fn directory_output<I, C, E, L>(
     entity_id: EntityId<I>,
     evidence: TransitionEvidence,
     activation_id: Option<ActivationId>,
-    slot: Arc<Slot<C, E, L>>,
+    target: OutputTarget<C, E, L>,
 ) -> DirectoryOutput<I, C, E, L> {
     DirectoryOutput {
         evidence,
         activation_id,
         entity_id,
-        slot,
+        target,
     }
 }
