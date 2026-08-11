@@ -200,6 +200,12 @@ impl<S, F> Base<S, F> {
             topology,
         }
     }
+
+    /// Borrow the retained machine state.
+    #[must_use]
+    pub const fn state(&self) -> &S {
+        &self.state
+    }
 }
 
 impl<S, I, O, F> Machine<I> for Base<S, F>

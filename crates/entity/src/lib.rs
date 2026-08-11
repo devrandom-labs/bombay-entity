@@ -23,10 +23,12 @@
 use core::fmt;
 use core::hash::Hash;
 
+mod directory;
 mod lifecycle;
 mod protocol;
 
 pub use bombay_transition::{Decision, Reducer};
+pub use directory::{DirectoryConfig, DirectoryError, DirectoryOutput, LocalDirectory};
 pub use lifecycle::{
     ActivatingSlot, ActivationId, ActivationWaiter, ActiveSlot, DispatchId, DrainFailure,
     DrainProgress, DrainStage, DrainingSlot, EntitySlot, LIFECYCLE_TOPOLOGY, LifecycleEdge,

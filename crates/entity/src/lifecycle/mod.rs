@@ -423,6 +423,18 @@ impl<C, E: Clone, L> EntitySlot<C, E, L> {
         }
     }
 
+    /// Return the activation represented by this slot, when one exists.
+    #[must_use]
+    pub const fn activation_id(&self) -> Option<ActivationId> {
+        match self {
+            Self::Inactive => None,
+            Self::Activating(state) => Some(state.activation_id),
+            Self::Active(state) => Some(state.activation_id),
+            Self::Draining(state) => Some(state.activation_id),
+            Self::Retiring { activation_id } => Some(*activation_id),
+        }
+    }
+
     /// Consume one fact and return the next state plus an effect batch.
     pub fn decide(self, event: SlotEvent<C, E, L>) -> SlotDecision<C, E, L> {
         SlotReducer.reduce(self, event)
