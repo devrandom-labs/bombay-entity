@@ -51,6 +51,20 @@ from affecting a newer incarnation.
 
 ## Application and incarnation ports
 
+Applications use the high-level facade; they do not submit lifecycle facts or
+manually interpret effects:
+
+```rust
+entities.dispatch(EntityId::new(42), command).await?;
+```
+
+An actor runtime implements `LocalEntityRuntime` once. That port supplies task
+ownership, transactional activation, exact-incarnation delivery, the ordered
+fence, and affine retirement. The facade feeds every asynchronous result back
+through the directory's authoritative lifecycle driver. `DirectoryOutput` and
+`EffectInterpreter` are integration-level APIs rather than application
+workflow.
+
 The application prepares a behavior without exposing persistence concepts to
 the entity runtime:
 

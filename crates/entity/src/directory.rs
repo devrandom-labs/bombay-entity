@@ -79,6 +79,7 @@ pub struct DirectoryOutput<I, C, E, L> {
     pub dispatch_id: Option<DispatchId>,
     /// Checked evidence for the installed lifecycle decision.
     pub evidence: TransitionEvidence,
+    pub(crate) activation_id: Option<ActivationId>,
     entity_id: EntityId<I>,
     slot: Arc<Slot<C, E, L>>,
 }
@@ -86,6 +87,11 @@ pub struct DirectoryOutput<I, C, E, L> {
 struct Slot<C, E, L> {
     lifecycle: Driver<LifecycleMachine<C, E, L>, SlotEvent<C, E, L>>,
     removable_activation: Mutex<Option<ActivationId>>,
+}
+
+struct Installed {
+    evidence: TransitionEvidence,
+    activation_id: Option<ActivationId>,
 }
 
 impl<C, E: Clone, L> Slot<C, E, L> {
@@ -96,8 +102,12 @@ impl<C, E: Clone, L> Slot<C, E, L> {
         }
     }
 
-    fn submit(&self, event: SlotEvent<C, E, L>) -> TransitionEvidence {
-        self.lifecycle.advance(event, |output| output.evidence)
+    fn submit(&self, event: SlotEvent<C, E, L>) -> Installed {
+        self.lifecycle
+            .advance(event, |output, successor| Installed {
+                evidence: output.evidence,
+                activation_id: successor.state().activation_id(),
+            })
     }
 
     fn mark_removable(&self, activation_id: ActivationId) {
@@ -214,17 +224,17 @@ where
                 };
                 let activation_id = ActivationId::new(sequence);
                 let slot = Arc::new(Slot::new());
-                let evidence = slot.submit(SlotEvent::ClaimActivation {
+                let installed = slot.submit(SlotEvent::ClaimActivation {
                     activation_id,
                     dispatch_id,
                     command: command.take().expect("command present"),
                     waiter_limit: self.waiter_limit,
                 });
                 entries.insert(entity_id.clone(), Arc::clone(&slot));
-                (slot, Some(evidence))
+                (slot, Some(installed))
             }
         };
-        let evidence = output.unwrap_or_else(|| {
+        let installed = output.unwrap_or_else(|| {
             slot.submit(SlotEvent::Dispatch {
                 dispatch_id,
                 command: command.take().expect("command present"),
@@ -233,7 +243,8 @@ where
         Ok(directory_output(
             entity_id,
             Some(dispatch_id),
-            evidence,
+            installed.evidence,
+            installed.activation_id,
             slot,
         ))
     }
@@ -367,15 +378,21 @@ where
             .expect("directory shard lock poisoned")
             .get(entity_id)
             .cloned();
-        let (slot, evidence) = if let Some(slot) = slot {
-            let evidence = slot.submit(event);
-            (slot, evidence)
+        let (slot, installed) = if let Some(slot) = slot {
+            let installed = slot.submit(event);
+            (slot, installed)
         } else {
             let slot = Arc::new(Slot::new());
-            let evidence = slot.submit(event);
-            (slot, evidence)
+            let installed = slot.submit(event);
+            (slot, installed)
         };
-        directory_output(entity_id.clone(), None, evidence, slot)
+        directory_output(
+            entity_id.clone(),
+            None,
+            installed.evidence,
+            installed.activation_id,
+            slot,
+        )
     }
 
     /// Interpret all effects queued for the output's stable slot.
@@ -470,11 +487,13 @@ fn directory_output<I, C, E, L>(
     entity_id: EntityId<I>,
     dispatch_id: Option<DispatchId>,
     evidence: TransitionEvidence,
+    activation_id: Option<ActivationId>,
     slot: Arc<Slot<C, E, L>>,
 ) -> DirectoryOutput<I, C, E, L> {
     DirectoryOutput {
         dispatch_id,
         evidence,
+        activation_id,
         entity_id,
         slot,
     }

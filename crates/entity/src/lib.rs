@@ -26,6 +26,7 @@ use core::hash::Hash;
 mod directory;
 mod lifecycle;
 mod protocol;
+mod runtime;
 
 pub use bombay_transition::{Decision, Reducer};
 pub use directory::{
@@ -40,6 +41,7 @@ pub use lifecycle::{
     lifecycle_machine, validate_lifecycle_topology,
 };
 pub use protocol::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
+pub use runtime::{Activated, DispatchFailure, EntityRuntime, FenceFailure, LocalEntityRuntime};
 
 /// A stable, typed identifier for an entity.
 ///

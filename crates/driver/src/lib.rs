@@ -69,14 +69,27 @@ where
     ///
     /// Panics after synchronization poison or if a previous machine transition
     /// panicked after taking ownership of the machine value.
-    pub fn advance<T>(&self, input: I, observe: impl FnOnce(&M::Output) -> T) -> T {
+    pub fn advance<T>(&self, input: I, observe: impl FnOnce(&M::Output, &M) -> T) -> T {
         let mut execution = self.execution.lock().expect("driver lock poisoned");
         let machine = execution.machine.take().expect("driver machine missing");
         let (output, successor) = machine.step(input);
-        let observed = observe(&output);
+        let observed = observe(&output, &successor);
         execution.machine = Some(successor);
         execution.outputs.push_back(output);
         observed
+    }
+
+    /// Inspect the current machine value under driver synchronization.
+    ///
+    /// The observer must be short and must not call back into this driver.
+    ///
+    /// # Panics
+    ///
+    /// Panics after synchronization poison or if a previous transition panic
+    /// left the machine value unavailable.
+    pub fn inspect<T>(&self, observe: impl FnOnce(&M) -> T) -> T {
+        let execution = self.execution.lock().expect("driver lock poisoned");
+        observe(execution.machine.as_ref().expect("driver machine missing"))
     }
 
     /// Interpret every currently or reentrantly queued output in transition order.
@@ -134,9 +147,9 @@ mod tests {
         let driver = Driver::new(Base::new(0_u8, EMPTY, |state: u8, input: u8| {
             (input, state.wrapping_add(input))
         }));
-        driver.advance(1, |_| ());
-        driver.advance(2, |_| ());
-        driver.advance(3, |_| ());
+        driver.advance(1, |_, _| ());
+        driver.advance(2, |_, _| ());
+        driver.advance(3, |_, _| ());
         let outputs = Mutex::new(Vec::new());
         driver.drive(&|output| outputs.lock().unwrap().push(output));
         assert_eq!(*outputs.lock().unwrap(), [1, 2, 3]);
