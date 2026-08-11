@@ -47,7 +47,7 @@ fn main() {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (output, machine) = machine.step(SlotEvent::ClaimActivation {
             activation_id: activation(1),
-            dispatch_id: DispatchId(1),
+            dispatch_id: DispatchId::new(NonZeroU64::MIN),
             command: 1,
             waiter_limit: NonZeroUsize::MIN,
         });

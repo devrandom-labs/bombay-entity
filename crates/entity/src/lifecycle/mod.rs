@@ -50,11 +50,25 @@ enum Generation<T> {
 }
 
 /// Identity of one dispatch operation within a slot.
+///
+/// The field is crate-internal so integrators cannot forge correlation
+/// identities or construct the unallocated zero sentinel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DispatchId(
-    /// Directory-local correlation sequence.
-    pub u64,
-);
+pub struct DispatchId(pub(crate) NonZeroU64);
+
+impl DispatchId {
+    /// Construct a dispatch identity from a non-zero directory sequence.
+    #[must_use]
+    pub const fn new(value: NonZeroU64) -> Self {
+        Self(value)
+    }
+
+    /// Return the directory sequence value.
+    #[must_use]
+    pub const fn get(self) -> NonZeroU64 {
+        self.0
+    }
+}
 
 /// Typed reason why a command was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,7 +203,7 @@ enum ReservationResolution {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainProgress {
     /// Admission is closed but earlier reserved sends remain unresolved.
-    Reservations(ReservationCount),
+    Reservations(NonZeroUsize),
     /// Every reservation resolved and the fence has been requested.
     FenceAcknowledgement,
 }
@@ -803,12 +817,12 @@ fn begin_drain<C, E: Clone, L>(state: ActiveSlot<E, L>) -> SlotDecision<C, E, L>
                 }),
             )
         }
-        reservations @ ReservationCount::Pending(_) => decision(
+        ReservationCount::Pending(pending) => decision(
             EntitySlot::Draining(DrainingSlot {
                 activation_id: state.activation_id,
                 endpoint: state.endpoint,
                 lease: state.lease,
-                progress: DrainProgress::Reservations(reservations),
+                progress: DrainProgress::Reservations(pending),
             }),
             SlotEffectBatch::default(),
         ),
@@ -877,19 +891,19 @@ fn resolve_draining_delivery<C, E: Clone, L>(
         DrainProgress::FenceAcknowledgement => {
             reject_failed_delivery(EntitySlot::Draining(state), failure, Refusal::Unavailable)
         }
-        DrainProgress::Reservations(reservations) => match reservations.resolve() {
-            ReservationResolution::Unexpected => {
-                reject_failed_delivery(EntitySlot::Draining(state), failure, Refusal::Unavailable)
-            }
-            ReservationResolution::Pending(reservations) => reject_failed_delivery(
-                EntitySlot::Draining(DrainingSlot {
-                    progress: DrainProgress::Reservations(reservations),
-                    ..state
-                }),
-                failure,
-                Refusal::Unavailable,
-            ),
-            ReservationResolution::Drained => {
+        // The count is non-zero by construction, so subtraction cannot
+        // underflow; reaching zero means the last reservation resolved.
+        DrainProgress::Reservations(pending) => {
+            if let Some(remaining) = pending.get().checked_sub(1).and_then(NonZeroUsize::new) {
+                reject_failed_delivery(
+                    EntitySlot::Draining(DrainingSlot {
+                        progress: DrainProgress::Reservations(remaining),
+                        ..state
+                    }),
+                    failure,
+                    Refusal::Unavailable,
+                )
+            } else {
                 let activation_id = state.activation_id;
                 let endpoint = state.endpoint.clone();
                 let next = EntitySlot::Draining(DrainingSlot {
@@ -904,7 +918,7 @@ fn resolve_draining_delivery<C, E: Clone, L>(
                     },
                 )
             }
-        },
+        }
     }
 }
 
@@ -990,11 +1004,15 @@ mod tests {
         ActivationId::new(NonZeroU64::new(value).unwrap())
     }
 
+    fn dispatch(value: u64) -> DispatchId {
+        DispatchId(NonZeroU64::new(value).unwrap())
+    }
+
     #[test]
     fn concurrent_demand_starts_one_activation_and_bounds_waiters() {
         let first = EntitySlot::<u8, u8, u8>::Inactive.decide(SlotEvent::ClaimActivation {
             activation_id: activation(1),
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 10,
             waiter_limit: NonZeroUsize::new(2).unwrap(),
         });
@@ -1004,12 +1022,12 @@ mod tests {
         ));
 
         let second = first.state.decide(SlotEvent::Dispatch {
-            dispatch_id: DispatchId(2),
+            dispatch_id: dispatch(2),
             command: 20,
         });
         assert!(second.effects.as_slice().is_empty());
         let third = second.state.decide(SlotEvent::Dispatch {
-            dispatch_id: DispatchId(3),
+            dispatch_id: dispatch(3),
             command: 30,
         });
         assert!(matches!(
@@ -1102,7 +1120,7 @@ mod tests {
             progress: super::DrainProgress::FenceAcknowledgement,
         });
         let refused = draining.decide(SlotEvent::Dispatch {
-            dispatch_id: DispatchId(8),
+            dispatch_id: dispatch(8),
             command: 9,
         });
         assert!(matches!(refused.state, EntitySlot::Draining(_)));
@@ -1120,12 +1138,12 @@ mod tests {
     fn activation_failure_preserves_waiter_order_before_removal() {
         let first = EntitySlot::<u8, u8, u8>::Inactive.decide(SlotEvent::ClaimActivation {
             activation_id: activation(1),
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 10,
             waiter_limit: NonZeroUsize::new(2).unwrap(),
         });
         let second = first.state.decide(SlotEvent::Dispatch {
-            dispatch_id: DispatchId(2),
+            dispatch_id: dispatch(2),
             command: 20,
         });
         let failed = second.state.decide(SlotEvent::ActivationFailed {
@@ -1134,10 +1152,10 @@ mod tests {
         assert!(matches!(
             failed.effects.as_slice(),
             [
-                SlotEffect::Reject { dispatch_id: DispatchId(1), command: 10, .. },
-                SlotEffect::Reject { dispatch_id: DispatchId(2), command: 20, .. },
+                SlotEffect::Reject { dispatch_id: first_id, command: 10, .. },
+                SlotEffect::Reject { dispatch_id: second_id, command: 20, .. },
                 SlotEffect::Remove { activation_id }
-            ] if *activation_id == activation(1)
+            ] if *first_id == dispatch(1) && *second_id == dispatch(2) && *activation_id == activation(1)
         ));
     }
 

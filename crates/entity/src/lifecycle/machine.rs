@@ -232,9 +232,9 @@ pub enum LifecycleTopologyError {
     /// One required lifecycle edge is absent.
     #[error("required lifecycle edge is absent")]
     Missing(LifecycleEdge),
-    /// Retirement could reopen admission.
-    #[error("retirement could reopen admission")]
-    RetiringToActive,
+    /// A draining or retiring edge could reopen admission.
+    #[error("drain or retirement could reopen admission")]
+    ReopensAdmission,
 }
 
 /// Validate graph properties and required entity lifecycle invariants.
@@ -252,9 +252,13 @@ pub fn validate_lifecycle_topology(topology: Topology) -> Result<(), LifecycleTo
         }
     }
     if topology.transitions.iter().any(|edge| {
-        edge.from == LifecyclePhase::Retiring.id() && edge.to == LifecyclePhase::Active.id()
+        let from_closes = edge.from == LifecyclePhase::Draining.id()
+            || edge.from == LifecyclePhase::Retiring.id();
+        let to_admission =
+            edge.to == LifecyclePhase::Activating.id() || edge.to == LifecyclePhase::Active.id();
+        from_closes && to_admission
     }) {
-        return Err(LifecycleTopologyError::RetiringToActive);
+        return Err(LifecycleTopologyError::ReopensAdmission);
     }
     Ok(())
 }
@@ -351,6 +355,10 @@ mod tests {
         ActivationId::new(NonZeroU64::new(value).unwrap())
     }
 
+    fn dispatch(value: u64) -> DispatchId {
+        DispatchId(NonZeroU64::new(value).unwrap())
+    }
+
     #[test]
     fn topology_is_valid_and_renders_deterministically() {
         validate_lifecycle_topology(LIFECYCLE_TOPOLOGY).unwrap();
@@ -369,7 +377,7 @@ mod tests {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (claim, machine) = machine.step(SlotEvent::ClaimActivation {
             activation_id: activation(1),
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 1,
             waiter_limit: NonZeroUsize::MIN,
         });
@@ -417,7 +425,7 @@ mod tests {
     fn stale_and_nonchanging_inputs_are_honestly_classified() {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (dispatch, machine) = machine.step(SlotEvent::Dispatch {
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 1,
         });
         assert_eq!(
@@ -444,7 +452,7 @@ mod tests {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (_, machine) = machine.step(SlotEvent::ClaimActivation {
             activation_id: activation(1),
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 1,
             waiter_limit: NonZeroUsize::MIN,
         });
@@ -508,12 +516,12 @@ mod tests {
         match input {
             Input::ClaimCurrent => SlotEvent::ClaimActivation {
                 activation_id: activation(1),
-                dispatch_id: DispatchId(1),
+                dispatch_id: dispatch(1),
                 command: 1,
                 waiter_limit: NonZeroUsize::new(2).unwrap(),
             },
             Input::Dispatch => SlotEvent::Dispatch {
-                dispatch_id: DispatchId(2),
+                dispatch_id: dispatch(2),
                 command: 2,
             },
             Input::ActivationCurrent => SlotEvent::ActivationSucceeded {
@@ -578,6 +586,33 @@ mod tests {
             prefix.push(input);
             enumerate(prefix, remaining - 1);
             prefix.pop();
+        }
+    }
+
+    #[test]
+    fn topology_reopening_admission_from_drain_or_retirement_is_rejected() {
+        for (from, to) in [
+            (LifecyclePhase::Draining, LifecyclePhase::Active),
+            (LifecyclePhase::Draining, LifecyclePhase::Activating),
+            (LifecyclePhase::Retiring, LifecyclePhase::Active),
+            (LifecyclePhase::Retiring, LifecyclePhase::Activating),
+        ] {
+            let mut transitions = LIFECYCLE_TOPOLOGY.transitions.to_vec();
+            transitions.push(Transition {
+                from: from.id(),
+                trigger: TriggerId(99),
+                to: to.id(),
+                label: "reopen",
+            });
+            let topology = Topology {
+                transitions: transitions.leak(),
+                ..LIFECYCLE_TOPOLOGY
+            };
+            assert_eq!(
+                validate_lifecycle_topology(topology),
+                Err(LifecycleTopologyError::ReopensAdmission),
+                "{from:?} -> {to:?} must be rejected"
+            );
         }
     }
 

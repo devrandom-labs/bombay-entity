@@ -223,7 +223,7 @@ where
         let Some(dispatch_sequence) = allocate(&self.next_dispatch) else {
             return Err(DirectoryError::DispatchIdsExhausted(command));
         };
-        let dispatch_id = DispatchId(dispatch_sequence.get());
+        let dispatch_id = DispatchId::new(dispatch_sequence);
         let shard = &self.shards[self.shard_index(&entity_id)];
         let mut entries = shard.lock().expect("directory shard lock poisoned");
         if let Some(slot) = entries.get(&entity_id) {

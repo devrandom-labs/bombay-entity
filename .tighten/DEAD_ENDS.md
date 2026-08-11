@@ -69,3 +69,14 @@ outstanding_reservations: 0}) fabricates a count for an untracked stale
 incarnation. The honest encoding (Option<usize> or a count-free variant)
 crosses the finalized SlotEffect/RetirementMode algebra; not landable as
 implementation tightening. Recorded, not actionable in this loop.
+
+## Real-SUT loom models for entity (blocked upstream, 2026-08-11)
+Adversary2 correctly found that entity/tests/loom_directory.rs models assert on
+abstract protocol reimplementations, not LocalDirectory. The fix — cfg(loom)
+sync swaps in directory.rs + [target.'cfg(loom)'.dependencies] loom — builds
+only until bombay-behavior 0.9.1: it calls communication's Consumer::recv,
+which bombay-communication gates #[cfg(not(loom))]. Any RUSTFLAGS=--cfg loom
+build of bombay-entity therefore fails in an external crate. Prerequisite:
+bombay-behavior must become loom-aware (upstream repo). Until then the abstract
+models stay, with docs corrected to describe them as protocol models (not
+directory models). All edits reverted.

@@ -61,8 +61,8 @@ pub enum TopologyError {
     /// Two vertices have the same identity.
     #[error("two vertices share an identity")]
     DuplicateVertex(VertexId),
-    /// Two edges have identical typed endpoints and trigger.
-    #[error("two transitions share endpoints and trigger")]
+    /// Two edges share a source vertex and trigger.
+    #[error("two transitions share a source and trigger")]
     DuplicateTransition(Transition),
     /// The initial identity is not a declared vertex.
     #[error("initial identity is not a declared vertex")]
@@ -394,7 +394,7 @@ mod tests {
         );
         assert_eq!(
             TopologyError::DuplicateTransition(EDGES[0]).to_string(),
-            "two transitions share endpoints and trigger"
+            "two transitions share a source and trigger"
         );
     }
 
