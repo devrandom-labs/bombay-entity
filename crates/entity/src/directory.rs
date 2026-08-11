@@ -138,6 +138,7 @@ type Shard<I, C, E, L> = Mutex<HashMap<EntityId<I>, Arc<Slot<C, E, L>>>>;
 /// Sharded local storage for authoritative per-entity lifecycle machines.
 pub struct LocalDirectory<I, C, E, L, S = RandomState> {
     shards: Box<[Shard<I, C, E, L>]>,
+    mask: u64,
     hash_builder: S,
     waiter_limit: NonZeroUsize,
     next_activation: AtomicU64,
@@ -179,11 +180,18 @@ where
         if !config.shards.get().is_power_of_two() {
             return Err(DirectoryError::InvalidShardCount);
         }
+        let mask = config
+            .shards
+            .get()
+            .checked_sub(1)
+            .and_then(|count| u64::try_from(count).ok())
+            .ok_or(DirectoryError::InvalidShardCount)?;
         let shards = (0..config.shards.get())
             .map(|_| Mutex::new(HashMap::new()))
             .collect();
         Ok(Self {
             shards,
+            mask,
             hash_builder,
             waiter_limit: config.activation_waiters,
             next_activation: AtomicU64::new(1),
@@ -483,8 +491,9 @@ where
     }
 
     fn shard_index(&self, entity_id: &EntityId<I>) -> usize {
-        let mask = u64::try_from(self.shards.len() - 1).expect("shard mask fits u64");
-        usize::try_from(self.hash_builder.hash_one(entity_id) & mask)
+        // The mask derives from the shard count, so the masked hash always
+        // fits the pointer width that allocated the shards.
+        usize::try_from(self.hash_builder.hash_one(entity_id) & self.mask)
             .expect("masked hash fits usize")
     }
 }

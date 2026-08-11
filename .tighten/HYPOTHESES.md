@@ -8,7 +8,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   LifecycleTopologyError (entity), TopologyError (transition, verify no_std support in
   thiserror 2.x), PoisonedInput (driver). Falsifier: any impl changes a public signature beyond
   adding trait impls, or breaks no_std build. Measure: gate green; check.sh score unchanged or better.
-- H02 arithmetic: replace `saturating_add` in ReservationCount::reserve (lifecycle/mod.rs:156)
+- H02 arithmetic: KEPT (E02). replace `saturating_add` in ReservationCount::reserve (lifecycle/mod.rs:156)
   and bare subs (:163, directory.rs:483) with checked_* + honest outcome. Threatened invariant:
   reservation counting exactness. Falsifier: any observable count differs on existing tests.
   Note: reserve overflow is unreachable at usize scale — first check whether the honest fix is a

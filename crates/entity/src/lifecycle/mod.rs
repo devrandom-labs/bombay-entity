@@ -153,14 +153,25 @@ impl ReservationCount {
     fn reserve(self) -> Self {
         match self {
             Self::Drained => Self::Pending(NonZeroUsize::MIN),
-            Self::Pending(value) => Self::from_len(value.get().saturating_add(1)),
+            // Overflow is structurally unreachable: every reservation is held by
+            // one live dispatch operation, and that many live operations cannot
+            // fit in the address space.
+            Self::Pending(value) => Self::Pending(
+                NonZeroUsize::new(
+                    value
+                        .get()
+                        .checked_add(1)
+                        .expect("reservations bounded by live dispatches"),
+                )
+                .expect("non-zero count remains non-zero"),
+            ),
         }
     }
 
     fn resolve(self) -> ReservationResolution {
         match self {
             Self::Drained => ReservationResolution::Unexpected,
-            Self::Pending(value) => match NonZeroUsize::new(value.get() - 1) {
+            Self::Pending(value) => match value.get().checked_sub(1).and_then(NonZeroUsize::new) {
                 Some(remaining) => ReservationResolution::Pending(Self::Pending(remaining)),
                 None => ReservationResolution::Drained,
             },
