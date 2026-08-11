@@ -627,6 +627,11 @@ fn decide_activating<C, E: Clone, L>(
             command,
             Refusal::Busy,
         ),
+        // A late failed delivery from a previous incarnation still owns its
+        // command; the command returns as unavailable.
+        SlotEvent::DeliveryResolved { failure, .. } => {
+            reject_failed_delivery(EntitySlot::Activating(state), failure, Refusal::Unavailable)
+        }
         _ => decision(EntitySlot::Activating(state), SlotEffectBatch::default()),
     }
 }

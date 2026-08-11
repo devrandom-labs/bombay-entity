@@ -1,6 +1,6 @@
 use super::{
     ActivatingSlot, ActivationWaiter, EntitySlot, Refusal, SlotDecision, SlotEffect,
-    SlotEffectBatch, SlotEvent, decision, reject, retire_stale,
+    SlotEffectBatch, SlotEvent, decision, reject, reject_failed_delivery, retire_stale,
 };
 
 pub(super) fn decide_inactive<C, E, L>(event: SlotEvent<C, E, L>) -> SlotDecision<C, E, L> {
@@ -35,6 +35,11 @@ pub(super) fn decide_inactive<C, E, L>(event: SlotEvent<C, E, L>) -> SlotDecisio
             lease,
             ..
         } => retire_stale(EntitySlot::Inactive, activation_id, lease),
+        // A late failed delivery still owns its command; no incarnation
+        // remains, so the command returns as unavailable.
+        SlotEvent::DeliveryResolved { failure, .. } => {
+            reject_failed_delivery(EntitySlot::Inactive, failure, Refusal::Unavailable)
+        }
         _ => decision(EntitySlot::Inactive, SlotEffectBatch::default()),
     }
 }

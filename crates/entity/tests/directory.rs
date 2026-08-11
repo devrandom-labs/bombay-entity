@@ -426,3 +426,83 @@ fn graceful_retirement_waits_for_fence_acknowledgement() {
     directory.interpret(directory.terminated(&entity_id, activation_id), &runtime);
     assert!(directory.is_empty());
 }
+
+fn activate_and_reserve(
+    directory: &Directory,
+    runtime: &Recorder,
+    entity_id: EntityId<u64>,
+) -> (ActivationId, DispatchId) {
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, runtime);
+    let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
+        panic!("activation not started");
+    };
+    directory.interpret(
+        directory.activation_succeeded(&entity_id, activation_id, 2, 3),
+        runtime,
+    );
+    directory.interpret(
+        directory.delivery_resolved(&entity_id, activation_id, None),
+        runtime,
+    );
+    directory.interpret(directory.dispatch(entity_id, 2).unwrap().output, runtime);
+    let reserved = {
+        let actions = runtime.0.lock().unwrap();
+        let Some(Action::Deliver(dispatch_id, 2)) = actions.last() else {
+            panic!("second dispatch not reserved for delivery");
+        };
+        *dispatch_id
+    };
+    directory.interpret(directory.begin_drain(&entity_id, activation_id), runtime);
+    directory.interpret(
+        directory.force_drain(
+            &entity_id,
+            activation_id,
+            DrainFailure {
+                stage: DrainStage::Reservations,
+                outstanding_reservations: 1,
+            },
+        ),
+        runtime,
+    );
+    (activation_id, reserved)
+}
+
+#[test]
+fn late_failed_delivery_into_retiring_returns_the_command() {
+    let directory = Directory::new(DirectoryConfig::default()).unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(25);
+    let (activation_id, reserved) = activate_and_reserve(&directory, &runtime, entity_id);
+
+    directory.interpret(
+        directory.delivery_resolved(&entity_id, activation_id, Some((reserved, 2))),
+        &runtime,
+    );
+
+    let actions = runtime.0.lock().unwrap();
+    assert!(actions.iter().any(|action| matches!(
+        action,
+        Action::Reject(dispatch_id, 2, Refusal::Unavailable) if *dispatch_id == reserved
+    )));
+}
+
+#[test]
+fn late_failed_delivery_after_removal_returns_the_command() {
+    let directory = Directory::new(DirectoryConfig::default()).unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(26);
+    let (activation_id, reserved) = activate_and_reserve(&directory, &runtime, entity_id);
+    directory.interpret(directory.terminated(&entity_id, activation_id), &runtime);
+    assert!(directory.is_empty());
+
+    directory.interpret(
+        directory.delivery_resolved(&entity_id, activation_id, Some((reserved, 2))),
+        &runtime,
+    );
+
+    let actions = runtime.0.lock().unwrap();
+    assert!(actions.iter().any(|action| matches!(
+        action,
+        Action::Reject(dispatch_id, 2, Refusal::Unavailable) if *dispatch_id == reserved
+    )));
+}
