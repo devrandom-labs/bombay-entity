@@ -60,6 +60,7 @@ name = "bombay-machine-executor"
 version = "0.1.0"
 dependencies = [
  "bombay-transition",
+ "loom",
 ]
 
 [[package]]

@@ -13,5 +13,8 @@ categories = ["concurrency"]
 [dependencies]
 bombay-transition.workspace = true
 
+[dev-dependencies]
+loom = "0.7.2"
+
 [lints]
 workspace = true

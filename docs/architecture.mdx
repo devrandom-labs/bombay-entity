@@ -188,12 +188,20 @@ does not acquire locks, start tasks, read clocks, or invoke endpoints.
 `bombay-transition` remains the allocation-free `no_std` description and
 composition layer. It does not gain locks, queues, or runtime policy.
 
-`bombay-machine-executor` is the deliberately narrow execution layer between
-pure machines and entity semantics. A `MachineExecutor<M, I>` owns the current
-machine value, linearizes each input, and enqueues the corresponding output at
-the same point. One caller handles outputs in transition order; concurrent and
-reentrant calls append work for that caller. No executor synchronization is
-held while an output interpreter runs.
+`bombay-machine-executor` provides two deliberately distinct execution laws.
+`SerializedExecutor<M>` queues inputs and completes each synchronous output
+handler before advancing the next transition. This is the run-to-completion law
+required by behavior and actor lifecycle turns. Each submission has a receipt;
+transition or handler panic poisons the executor and resolves queued receipts as
+poisoned rather than silently stranding them.
+
+`LinearizedExecutor<M>` advances inputs immediately and enqueues outputs at the
+same linearization point. One caller dispatches those outputs in order while
+concurrent and reentrant calls contribute work. Its non-owner return is
+explicitly fire-and-forget. Entity uses this policy because lifecycle admission
+must close at transition linearization while asynchronous operations return
+later as typed facts. A handler panic drops its current output exactly once and
+a later dispatcher resumes the remaining queue.
 
 The executor knows nothing about entities, activation, delivery, draining,
 Actorpass, or asynchronous executors. The entity directory supplies stable

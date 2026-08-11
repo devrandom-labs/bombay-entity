@@ -35,10 +35,10 @@ pub use directory::{
 pub use lifecycle::{
     ActivatingSlot, ActivationId, ActivationWaiter, ActiveSlot, DispatchId, DrainFailure,
     DrainProgress, DrainStage, DrainingSlot, EntitySlot, LIFECYCLE_TOPOLOGY, LifecycleEdge,
-    LifecycleMachine, LifecycleModel, LifecycleModelInterpreter, LifecycleOutput, LifecyclePhase,
-    LifecycleTopologyError, LifecycleTrigger, Refusal, ReservationCount, RetirementMode,
-    SlotDecision, SlotEffect, SlotEffectBatch, SlotEvent, SlotReducer, TransitionEvidence,
-    lifecycle_machine, validate_lifecycle_topology,
+    LifecycleMachine, LifecycleModel, LifecycleOutput, LifecyclePhase, LifecycleTopologyError,
+    LifecycleTrigger, Refusal, ReservationCount, RetirementMode, SlotDecision, SlotEffect,
+    SlotEffectBatch, SlotEvent, SlotReducer, TransitionEvidence, lifecycle_machine,
+    lifecycle_model, validate_lifecycle_topology,
 };
 pub use protocol::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
 pub use runtime::{Activated, DispatchFailure, EntityRuntime, FenceFailure, LocalEntityRuntime};

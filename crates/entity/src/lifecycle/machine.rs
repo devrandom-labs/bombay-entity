@@ -1,5 +1,8 @@
+use std::sync::OnceLock;
+
 use bombay_transition::{
-    Base, Reducer, Structure, Topology, TopologyError, Transition, TriggerId, Vertex, VertexId,
+    Base, Reducer, Topology, TopologyError, Transition, TriggerId, ValidatedTopology, Vertex,
+    VertexId,
 };
 
 use super::{EntitySlot, SlotEffectBatch, SlotEvent, SlotReducer};
@@ -170,6 +173,7 @@ pub struct LifecycleOutput<C, E, L> {
     pub effects: SlotEffectBatch<C, E, L>,
     /// Checked phase-transition evidence.
     pub evidence: TransitionEvidence,
+    pub(crate) activation_id: Option<super::ActivationId>,
 }
 
 const VERTICES: &[Vertex] = &[
@@ -246,25 +250,10 @@ impl LifecycleModel {
     }
 }
 
-/// Structural interpreter producing the lifecycle property-test model.
-#[derive(Debug, Default)]
-pub struct LifecycleModelInterpreter;
-
-impl Structure for LifecycleModelInterpreter {
-    type Output = LifecycleModel;
-
-    fn base(&mut self, topology: Topology) -> Self::Output {
-        LifecycleModel(topology)
-    }
-    fn then(&mut self, _first: Self::Output, _second: Self::Output) -> Self::Output {
-        panic!("the lifecycle is one base machine")
-    }
-    fn product(&mut self, _left: Self::Output, _right: Self::Output) -> Self::Output {
-        panic!("the lifecycle is one base machine")
-    }
-    fn choice(&mut self, _left: Self::Output, _right: Self::Output) -> Self::Output {
-        panic!("the lifecycle is one base machine")
-    }
+/// Return the authoritative lifecycle model used by execution and tests.
+#[must_use]
+pub const fn lifecycle_model() -> LifecycleModel {
+    LifecycleModel(LIFECYCLE_TOPOLOGY)
 }
 
 /// Lifecycle-specific structural validation failure.
@@ -304,14 +293,24 @@ type TransitionFn<C, E, L> =
     fn(EntitySlot<C, E, L>, SlotEvent<C, E, L>) -> (LifecycleOutput<C, E, L>, EntitySlot<C, E, L>);
 
 /// Representable executable lifecycle machine for one stable entity slot.
-pub type LifecycleMachine<C, E, L> = Base<EntitySlot<C, E, L>, TransitionFn<C, E, L>>;
+pub type LifecycleMachine<C, E, L> =
+    Base<EntitySlot<C, E, L>, TransitionFn<C, E, L>, SlotEvent<C, E, L>, LifecycleOutput<C, E, L>>;
 
 /// Construct an inactive entity lifecycle machine.
+///
+/// # Panics
+///
+/// Panics if the crate's statically declared lifecycle topology is invalid.
 #[must_use]
 pub fn lifecycle_machine<C, E: Clone, L>() -> LifecycleMachine<C, E, L> {
+    static VALIDATED: OnceLock<ValidatedTopology> = OnceLock::new();
     Base::new(
         EntitySlot::Inactive,
-        LIFECYCLE_TOPOLOGY,
+        *VALIDATED.get_or_init(|| {
+            LIFECYCLE_TOPOLOGY
+                .validated()
+                .expect("lifecycle topology is valid")
+        }),
         transition::<C, E, L>,
     )
 }
@@ -348,6 +347,7 @@ fn transition<C, E: Clone, L>(
         LifecycleOutput {
             effects: decision.effects,
             evidence,
+            activation_id: decision.state.activation_id(),
         },
         decision.state,
     )
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn topology_is_valid_and_renders_deterministically() {
         validate_lifecycle_topology(LIFECYCLE_TOPOLOGY).unwrap();
-        let model = lifecycle_machine::<u8, u8, u8>().describe(&mut LifecycleModelInterpreter);
+        let model = lifecycle_model();
         let mut mermaid = String::new();
         model.write_mermaid(&mut mermaid).unwrap();
         assert_eq!(model.vertices().len(), 5);
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn every_observed_phase_change_carries_declared_edge_evidence() {
-        let model = lifecycle_machine::<u8, u8, u8>().describe(&mut LifecycleModelInterpreter);
+        let model = lifecycle_model();
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (claim, machine) = machine.step(SlotEvent::ClaimActivation {
             activation_id: activation(1),
@@ -428,7 +428,7 @@ mod tests {
         let (fence, machine) = machine.step(SlotEvent::FenceAcknowledged {
             activation_id: activation(1),
         });
-        let (terminated, machine) = machine.step(SlotEvent::Terminated {
+        let (terminated, _machine) = machine.step(SlotEvent::Terminated {
             activation_id: activation(1),
         });
         for evidence in [
@@ -443,7 +443,7 @@ mod tests {
             };
             assert!(model.contains(edge));
         }
-        assert_eq!(machine.describe(&mut LifecycleModelInterpreter), model);
+        assert_eq!(lifecycle_model(), model);
     }
 
     #[test]
@@ -594,12 +594,12 @@ mod tests {
     fn check_trace(trace: &[Input], model: LifecycleModel) {
         let mut machine = lifecycle_machine::<u8, u8, u8>();
         for input in trace {
-            let before = machine.describe(&mut LifecycleModelInterpreter);
+            let before = lifecycle_model();
             let (output, successor) = machine.step(event(*input));
             if let TransitionEvidence::Traversed(edge) = output.evidence {
                 assert!(model.contains(edge));
             }
-            assert_eq!(successor.describe(&mut LifecycleModelInterpreter), before);
+            assert_eq!(lifecycle_model(), before);
             machine = successor;
         }
     }
@@ -618,7 +618,7 @@ mod tests {
 
     #[test]
     fn bounded_event_traces_preserve_topology_evidence_and_structure() {
-        let model = lifecycle_machine::<u8, u8, u8>().describe(&mut LifecycleModelInterpreter);
+        let model = lifecycle_model();
         enumerate(&mut Vec::new(), 4, model);
     }
 }

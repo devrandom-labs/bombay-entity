@@ -43,6 +43,18 @@ pub struct Topology {
     pub transitions: &'static [Transition],
 }
 
+/// Topology whose identities, references, and reachability were validated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidatedTopology(Topology);
+
+impl ValidatedTopology {
+    /// Borrow the validated descriptive topology.
+    #[must_use]
+    pub const fn topology(self) -> Topology {
+        self.0
+    }
+}
+
 /// Structural defect found in a topology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TopologyError {
@@ -59,6 +71,16 @@ pub enum TopologyError {
 }
 
 impl Topology {
+    /// Validate and retain this topology for executable machine construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first structural defect in declaration order.
+    pub fn validated(self) -> Result<ValidatedTopology, TopologyError> {
+        self.validate()?;
+        Ok(ValidatedTopology(self))
+    }
+
     /// Validate identity uniqueness, references, initial state, and reachability.
     ///
     /// Validation uses fixed stack storage because vertex identities are bytes;
@@ -81,7 +103,10 @@ impl Topology {
             return Err(TopologyError::UnknownInitial(self.initial));
         }
         for (index, edge) in self.transitions.iter().enumerate() {
-            if self.transitions[..index].contains(edge) {
+            if self.transitions[..index]
+                .iter()
+                .any(|known| known.from == edge.from && known.trigger == edge.trigger)
+            {
                 return Err(TopologyError::DuplicateTransition(*edge));
             }
             for vertex in [edge.from, edge.to] {
@@ -133,12 +158,15 @@ impl Topology {
 }
 
 /// A stateful transducer whose composition remains structurally inspectable.
-pub trait Machine<I> {
+pub trait Machine {
+    /// Input consumed by one step.
+    type Input;
+
     /// Output produced for one input.
     type Output;
 
     /// Consume one input and return the output plus successor machine.
-    fn step(self, input: I) -> (Self::Output, Self)
+    fn step(self, input: Self::Input) -> (Self::Output, Self)
     where
         Self: Sized;
 
@@ -147,7 +175,7 @@ pub trait Machine<I> {
 }
 
 /// Structural composition operations available to every machine.
-pub trait Compose<I>: Machine<I> + Sized {
+pub trait Compose: Machine + Sized {
     /// Compose this machine sequentially with another machine.
     fn then<N>(self, next: N) -> Then<Self, N> {
         Then(self, next)
@@ -159,12 +187,12 @@ pub trait Compose<I>: Machine<I> + Sized {
     }
 
     /// Compose this machine as an alternative to another machine.
-    fn choice<N>(self, other: N) -> Choice<Self, N> {
-        Choice(self, other)
+    fn routed<N>(self, other: N) -> Routed<Self, N> {
+        Routed(self, other)
     }
 }
 
-impl<I, M: Machine<I>> Compose<I> for M {}
+impl<M: Machine> Compose for M {}
 
 /// Interpreter for the composition structure of a machine.
 pub trait Structure {
@@ -181,23 +209,25 @@ pub trait Structure {
     fn product(&mut self, left: Self::Output, right: Self::Output) -> Self::Output;
 
     /// Interpret sum composition.
-    fn choice(&mut self, left: Self::Output, right: Self::Output) -> Self::Output;
+    fn routed(&mut self, left: Self::Output, right: Self::Output) -> Self::Output;
 }
 
 /// An indivisible stateful machine and its inspectable topology.
-pub struct Base<S, F> {
+pub struct Base<S, F, I, O> {
     state: S,
     transition: F,
-    topology: Topology,
+    topology: ValidatedTopology,
+    signature: core::marker::PhantomData<fn(I) -> O>,
 }
 
-impl<S, F> Base<S, F> {
+impl<S, F, I, O> Base<S, F, I, O> {
     /// Construct a base machine from state, topology, and transition function.
-    pub const fn new(state: S, topology: Topology, transition: F) -> Self {
+    pub const fn new(state: S, topology: ValidatedTopology, transition: F) -> Self {
         Self {
             state,
             transition,
             topology,
+            signature: core::marker::PhantomData,
         }
     }
 
@@ -208,17 +238,19 @@ impl<S, F> Base<S, F> {
     }
 }
 
-impl<S, I, O, F> Machine<I> for Base<S, F>
+impl<S, I, O, F> Machine for Base<S, F, I, O>
 where
     F: FnMut(S, I) -> (O, S),
 {
+    type Input = I;
     type Output = O;
 
-    fn step(self, input: I) -> (Self::Output, Self) {
+    fn step(self, input: Self::Input) -> (Self::Output, Self) {
         let Self {
             state,
             mut transition,
             topology,
+            signature,
         } = self;
         let (output, state) = transition(state, input);
         (
@@ -227,26 +259,28 @@ where
                 state,
                 transition,
                 topology,
+                signature,
             },
         )
     }
 
     fn describe<V: Structure>(&self, visitor: &mut V) -> V::Output {
-        visitor.base(self.topology)
+        visitor.base(self.topology.topology())
     }
 }
 
 /// Sequential composition of two machines.
 pub struct Then<A, B>(A, B);
 
-impl<I, A, B> Machine<I> for Then<A, B>
+impl<A, B> Machine for Then<A, B>
 where
-    A: Machine<I>,
-    B: Machine<A::Output>,
+    A: Machine,
+    B: Machine<Input = A::Output>,
 {
+    type Input = A::Input;
     type Output = B::Output;
 
-    fn step(self, input: I) -> (Self::Output, Self) {
+    fn step(self, input: Self::Input) -> (Self::Output, Self) {
         let (middle, first) = self.0.step(input);
         let (output, second) = self.1.step(middle);
         (output, Self(first, second))
@@ -262,14 +296,15 @@ where
 /// Product composition of two independent machines.
 pub struct Product<A, B>(A, B);
 
-impl<I, J, A, B> Machine<(I, J)> for Product<A, B>
+impl<A, B> Machine for Product<A, B>
 where
-    A: Machine<I>,
-    B: Machine<J>,
+    A: Machine,
+    B: Machine,
 {
+    type Input = (A::Input, B::Input);
     type Output = (A::Output, B::Output);
 
-    fn step(self, (left, right): (I, J)) -> (Self::Output, Self) {
+    fn step(self, (left, right): Self::Input) -> (Self::Output, Self) {
         let (left_output, left_machine) = self.0.step(left);
         let (right_output, right_machine) = self.1.step(right);
         (
@@ -295,16 +330,20 @@ pub enum Either<L, R> {
 }
 
 /// Sum composition routing each alternative to its corresponding machine.
-pub struct Choice<A, B>(A, B);
+pub struct Routed<A, B>(A, B);
 
-impl<I, J, A, B> Machine<Either<I, J>> for Choice<A, B>
+/// Compatibility name for [`Routed`].
+pub type Choice<A, B> = Routed<A, B>;
+
+impl<A, B> Machine for Routed<A, B>
 where
-    A: Machine<I>,
-    B: Machine<J>,
+    A: Machine,
+    B: Machine,
 {
+    type Input = Either<A::Input, B::Input>;
     type Output = Either<A::Output, B::Output>;
 
-    fn step(self, input: Either<I, J>) -> (Self::Output, Self) {
+    fn step(self, input: Self::Input) -> (Self::Output, Self) {
         match input {
             Either::Left(left) => {
                 let (output, machine) = self.0.step(left);
@@ -320,7 +359,7 @@ where
     fn describe<V: Structure>(&self, visitor: &mut V) -> V::Output {
         let left = self.0.describe(visitor);
         let right = self.1.describe(visitor);
-        visitor.choice(left, right)
+        visitor.routed(left, right)
     }
 }
 
@@ -358,6 +397,15 @@ mod tests {
         },
     ];
     const DUPLICATE_EDGES: &[Transition] = &[EDGES[0], EDGES[0]];
+    const AMBIGUOUS: &[Transition] = &[
+        EDGES[0],
+        Transition {
+            from: READY,
+            trigger: TriggerId(0),
+            to: STRANDED,
+            label: "different presentation",
+        },
+    ];
 
     fn topology(name: &'static str) -> Topology {
         Topology {
@@ -408,7 +456,7 @@ mod tests {
             }
         }
 
-        fn choice(&mut self, left: Self::Output, right: Self::Output) -> Self::Output {
+        fn routed(&mut self, left: Self::Output, right: Self::Output) -> Self::Output {
             Shape {
                 bases: left.bases + right.bases,
                 sequences: left.sequences + right.sequences,
@@ -420,11 +468,19 @@ mod tests {
 
     #[test]
     fn sequential_machine_executes_and_retains_its_structure() {
-        let increment = Base::new(0_u8, topology("increment"), |state: u8, input: u8| {
-            let state = state + input;
-            (state, state)
-        });
-        let double = Base::new((), topology("double"), |(), input: u8| (input * 2, ()));
+        let increment = Base::new(
+            0_u8,
+            topology("increment").validated().unwrap(),
+            |state: u8, input: u8| {
+                let state = state + input;
+                (state, state)
+            },
+        );
+        let double = Base::new(
+            (),
+            topology("double").validated().unwrap(),
+            |(), input: u8| (input * 2, ()),
+        );
         let machine = increment.then(double);
 
         let (output, machine) = machine.step(3);
@@ -508,5 +564,50 @@ mod tests {
             .validate(),
             Err(super::TopologyError::DuplicateTransition(EDGES[0]))
         );
+
+        assert_eq!(
+            Topology {
+                name: "ambiguous",
+                initial: READY,
+                vertices: STRANDED_VERTICES,
+                transitions: AMBIGUOUS,
+            }
+            .validate(),
+            Err(super::TopologyError::DuplicateTransition(AMBIGUOUS[1]))
+        );
+    }
+
+    #[test]
+    fn product_and_routed_composition_preserve_untouched_affine_state() {
+        struct Affine(u8);
+
+        let left = Base::new(
+            Affine(1),
+            topology("left").validated().unwrap(),
+            |state: Affine, input: u8| (state.0 + input, Affine(state.0 + input)),
+        );
+        let right = Base::new(
+            Affine(10),
+            topology("right").validated().unwrap(),
+            |state: Affine, input: u8| (state.0 + input, Affine(state.0 + input)),
+        );
+        let (output, product) = left.product(right).step((2, 3));
+        assert_eq!(output, (3, 13));
+
+        let left = Base::new(
+            Affine(1),
+            topology("left").validated().unwrap(),
+            |state: Affine, input: u8| (state.0 + input, Affine(state.0 + input)),
+        );
+        let right = Base::new(
+            Affine(10),
+            topology("right").validated().unwrap(),
+            |state: Affine, input: u8| (state.0 + input, Affine(state.0 + input)),
+        );
+        let (output, routed) = left.routed(right).step(super::Either::Left(2));
+        assert_eq!(output, super::Either::Left(3));
+        let (output, _) = routed.step(super::Either::Right(3));
+        assert_eq!(output, super::Either::Right(13));
+        assert_eq!(product.describe(&mut Count).products, 1);
     }
 }

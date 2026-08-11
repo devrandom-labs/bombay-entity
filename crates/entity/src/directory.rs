@@ -6,7 +6,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bombay_machine_executor::MachineExecutor;
+use bombay_machine_executor::{LinearizedExecutor, OutputEvidence};
 
 use crate::{
     ActivationId, DispatchId, DrainFailure, EntityId, LifecycleMachine, LifecycleOutput, Refusal,
@@ -85,7 +85,7 @@ pub struct DirectoryOutput<I, C, E, L> {
 }
 
 struct Slot<C, E, L> {
-    lifecycle: MachineExecutor<LifecycleMachine<C, E, L>, SlotEvent<C, E, L>>,
+    lifecycle: LinearizedExecutor<LifecycleMachine<C, E, L>>,
     removable_activation: Mutex<Option<ActivationId>>,
 }
 
@@ -97,21 +97,21 @@ struct Installed {
 impl<C, E: Clone, L> Slot<C, E, L> {
     fn new() -> Self {
         Self {
-            lifecycle: MachineExecutor::new(lifecycle_machine()),
+            lifecycle: LinearizedExecutor::new(lifecycle_machine()),
             removable_activation: Mutex::new(None),
         }
     }
 
     fn submit(&self, event: SlotEvent<C, E, L>) -> Installed {
-        self.lifecycle.submit(event, |output, successor| Installed {
-            evidence: output.evidence,
-            activation_id: successor.state().activation_id(),
-        })
+        let (evidence, activation_id) = self.lifecycle.submit(event);
+        Installed {
+            evidence,
+            activation_id,
+        }
     }
 
     fn activation_id(&self) -> Option<ActivationId> {
-        self.lifecycle
-            .inspect(|machine| machine.state().activation_id())
+        self.lifecycle.evidence().and_then(|evidence| evidence.1)
     }
 
     fn mark_removable(&self, activation_id: ActivationId) {
@@ -421,7 +421,7 @@ where
             entity_id, slot, ..
         } = output;
         slot.lifecycle
-            .interpret_pending(&|output: LifecycleOutput<C, E, L>| {
+            .dispatch_pending(&|output: LifecycleOutput<C, E, L>| {
                 output.effects.for_each(|effect| match effect {
                     SlotEffect::StartActivation { activation_id } => {
                         runtime.start_activation(entity_id.clone(), activation_id);
@@ -483,6 +483,14 @@ where
         let mask = u64::try_from(self.shards.len() - 1).expect("shard mask fits u64");
         usize::try_from(self.hash_builder.hash_one(entity_id) & mask)
             .expect("masked hash fits usize")
+    }
+}
+
+impl<C, E, L> OutputEvidence for LifecycleOutput<C, E, L> {
+    type Evidence = (TransitionEvidence, Option<ActivationId>);
+
+    fn evidence(&self) -> Self::Evidence {
+        (self.evidence, self.activation_id)
     }
 }
 

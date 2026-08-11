@@ -14,9 +14,9 @@ use inactive::decide_inactive;
 use retiring::decide_retiring;
 
 pub use machine::{
-    LIFECYCLE_TOPOLOGY, LifecycleEdge, LifecycleMachine, LifecycleModel, LifecycleModelInterpreter,
-    LifecycleOutput, LifecyclePhase, LifecycleTopologyError, LifecycleTrigger, TransitionEvidence,
-    lifecycle_machine, validate_lifecycle_topology,
+    LIFECYCLE_TOPOLOGY, LifecycleEdge, LifecycleMachine, LifecycleModel, LifecycleOutput,
+    LifecyclePhase, LifecycleTopologyError, LifecycleTrigger, TransitionEvidence,
+    lifecycle_machine, lifecycle_model, validate_lifecycle_topology,
 };
 
 /// Globally unique identity of one activation attempt and incarnation.
@@ -486,7 +486,13 @@ impl<C, E: Clone, L> EntitySlot<C, E, L> {
     where
         I: IntoIterator<Item = SlotEvent<C, E, L>>,
     {
-        SlotReducer.fold(self, events)
+        events.into_iter().fold(
+            Decision::new(self, SlotEffectBatch::default()),
+            |accumulated, event| {
+                let decision = SlotReducer.reduce(accumulated.state, event);
+                Decision::new(decision.state, accumulated.effects + decision.effects)
+            },
+        )
     }
 }
 

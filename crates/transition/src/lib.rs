@@ -29,8 +29,8 @@
 mod machine;
 
 pub use machine::{
-    Base, Choice, Compose, Either, Machine, Product, Structure, Then, Topology, TopologyError,
-    Transition, TriggerId, Vertex, VertexId,
+    Base, Choice, Compose, Either, Machine, Product, Routed, Structure, Then, Topology,
+    TopologyError, Transition, TriggerId, ValidatedTopology, Vertex, VertexId,
 };
 
 /// The value produced by one deterministic reduction.
@@ -79,55 +79,24 @@ pub trait Reducer<S, E> {
 
     /// Reduce one state and event into the next state and effects.
     fn reduce(&self, state: S, event: E) -> Decision<S, Self::Effects>;
-
-    /// Fold an ordered event stream through the reducer.
-    ///
-    /// Effects retain event order through their associative operation. Empty
-    /// input returns the initial state and the effect identity.
-    fn fold<I>(&self, initial: S, events: I) -> Decision<S, Self::Effects>
-    where
-        I: IntoIterator<Item = E>,
-        Self::Effects: Default + core::ops::Add<Output = Self::Effects>,
-    {
-        events.into_iter().fold(
-            Decision::new(initial, Self::Effects::default()),
-            |accumulator, event| {
-                self.reduce(accumulator.state, event)
-                    .map_effects(|effects| accumulator.effects + effects)
-            },
-        )
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use core::ops::Add;
-
     use super::{Decision, Reducer};
-
-    #[derive(Default, PartialEq, Eq, Debug)]
-    struct Effects(u32);
-
-    impl Add for Effects {
-        type Output = Self;
-
-        fn add(self, other: Self) -> Self {
-            Self(self.0 * 10 + other.0)
-        }
-    }
 
     struct Sum;
 
     impl Reducer<u32, u32> for Sum {
-        type Effects = Effects;
+        type Effects = u32;
 
         fn reduce(&self, state: u32, event: u32) -> Decision<u32, Self::Effects> {
-            Decision::new(state + event, Effects(event))
+            Decision::new(state + event, event)
         }
     }
 
     #[test]
-    fn fold_preserves_state_and_effect_order() {
-        assert_eq!(Sum.fold(1, [2, 4, 8]), Decision::new(15, Effects(248)));
+    fn reducer_returns_owned_state_and_effects() {
+        assert_eq!(Sum.reduce(1, 2), Decision::new(3, 2));
     }
 }

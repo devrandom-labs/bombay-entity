@@ -1,25 +1,28 @@
-//! Ordered concurrent execution for pure representable machines.
+//! Concurrent execution policies for pure representable machines.
 //!
-//! A [`MachineExecutor`] owns the current value of a [`Machine`]. Inputs
-//! advance that value under short synchronization and enqueue the corresponding
-//! outputs at the same linearization point. Exactly one caller interprets
-//! queued outputs; reentrant and concurrent callers append work for it.
+//! [`SerializedExecutor`] provides run-to-completion turns: it queues inputs
+//! and does not advance the next transition until the preceding output handler
+//! returns. [`LinearizedExecutor`] advances inputs immediately under its lock,
+//! then dispatches already-ordered outputs. The latter policy is appropriate
+//! only when transition linearization may precede completion of earlier work.
 
 #![deny(missing_docs)]
 
+#[cfg(loom)]
+use loom::sync::{Arc, Condvar, Mutex};
 use std::collections::VecDeque;
-use std::marker::PhantomData;
-use std::sync::Mutex;
+#[cfg(not(loom))]
+use std::sync::{Arc, Condvar, Mutex};
 
 pub use bombay_transition::Machine;
 
-/// Interprets one machine output without executor synchronization held.
-pub trait OutputInterpreter<O> {
-    /// Handle the next output in machine transition order.
+/// Handles one machine output synchronously.
+pub trait OutputHandler<O> {
+    /// Handle the complete output of one transition.
     fn handle(&self, output: O);
 }
 
-impl<O, F> OutputInterpreter<O> for F
+impl<O, F> OutputHandler<O> for F
 where
     F: Fn(O),
 {
@@ -28,135 +31,599 @@ where
     }
 }
 
-/// A live, linearizable execution of one pure machine.
-pub struct MachineExecutor<M, I>
-where
-    M: Machine<I>,
-{
-    execution: Mutex<Execution<M, M::Output>>,
-    input: PhantomData<fn(I)>,
+/// Extracts small copyable evidence before an output is queued for dispatch.
+pub trait OutputEvidence {
+    /// Evidence returned to the submitting caller.
+    type Evidence;
+
+    /// Extract evidence without consuming the output.
+    fn evidence(&self) -> Self::Evidence;
 }
 
-struct Execution<M, O> {
+/// Result of waiting for a serialized turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnOutcome {
+    /// The transition and its complete synchronous output handling finished.
+    Completed,
+    /// The executor was poisoned by a transition or output-handler panic.
+    Poisoned,
+}
+
+/// Completion receipt for one serialized input.
+pub struct TurnReceipt(Arc<TurnCompletion>);
+
+struct TurnCompletion {
+    outcome: Mutex<Option<TurnOutcome>>,
+    ready: Condvar,
+}
+
+impl TurnReceipt {
+    /// Return the outcome without blocking, if the turn has finished.
+    ///
+    /// # Panics
+    ///
+    /// Panics if receipt synchronization was poisoned.
+    #[must_use]
+    pub fn outcome(&self) -> Option<TurnOutcome> {
+        *self.0.outcome.lock().expect("turn receipt lock poisoned")
+    }
+
+    /// Block until the turn completes or its executor is poisoned.
+    ///
+    /// # Panics
+    ///
+    /// Panics if receipt synchronization was poisoned.
+    #[must_use]
+    pub fn wait(self) -> TurnOutcome {
+        let mut outcome = self.0.outcome.lock().expect("turn receipt lock poisoned");
+        loop {
+            if let Some(outcome) = *outcome {
+                return outcome;
+            }
+            outcome = self
+                .0
+                .ready
+                .wait(outcome)
+                .expect("turn receipt lock poisoned");
+        }
+    }
+}
+
+fn complete(completion: &TurnCompletion, outcome: TurnOutcome) {
+    *completion
+        .outcome
+        .lock()
+        .expect("turn receipt lock poisoned") = Some(outcome);
+    completion.ready.notify_all();
+}
+
+/// Rejection of an input after a serialized executor was poisoned.
+#[derive(Debug)]
+pub struct PoisonedInput<I>(
+    /// Input whose ownership was not accepted.
+    pub I,
+);
+
+/// Serialized run-to-completion execution of one machine.
+pub struct SerializedExecutor<M: Machine> {
+    execution: Mutex<SerializedExecution<M>>,
+}
+
+struct SerializedExecution<M: Machine> {
     machine: Option<M>,
-    outputs: VecDeque<O>,
-    handling: bool,
+    inputs: VecDeque<(M::Input, Arc<TurnCompletion>)>,
+    running: bool,
+    poisoned: bool,
 }
 
-impl<M, I> MachineExecutor<M, I>
-where
-    M: Machine<I>,
-{
-    /// Create a live execution of `machine` with an empty output queue.
+impl<M: Machine> SerializedExecutor<M> {
+    /// Construct a serialized executor with an empty input queue.
     #[must_use]
     pub fn new(machine: M) -> Self {
         Self {
-            execution: Mutex::new(Execution {
+            execution: Mutex::new(SerializedExecution {
                 machine: Some(machine),
-                outputs: VecDeque::new(),
-                handling: false,
+                inputs: VecDeque::new(),
+                running: false,
+                poisoned: false,
             }),
-            input: PhantomData,
         }
     }
 
-    /// Advance the machine and enqueue its output atomically.
+    /// Queue one input and, when this caller acquires ownership, drain turns.
     ///
-    /// The observer runs while the transition is linearized and may copy small
-    /// evidence from the output. It must not call back into this executor.
+    /// Reentrant and concurrent calls enqueue their input and return a receipt;
+    /// they never advance a transition while an earlier output is being handled.
+    /// Waiting on a receipt from inside `handler` would deadlock and must be
+    /// deferred until the outer turn returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns input ownership when a previous transition or handler panicked.
     ///
     /// # Panics
     ///
-    /// Panics after synchronization poison or if a previous machine transition
-    /// panicked after taking ownership of the machine value.
-    pub fn submit<T>(&self, input: I, observe: impl FnOnce(&M::Output, &M) -> T) -> T {
+    /// Propagates a machine transition or output-handler panic after poisoning
+    /// this executor and resolving every outstanding receipt.
+    pub fn submit<H>(
+        &self,
+        input: M::Input,
+        handler: &H,
+    ) -> Result<TurnReceipt, PoisonedInput<M::Input>>
+    where
+        H: OutputHandler<M::Output>,
+    {
+        let completion = Arc::new(TurnCompletion {
+            outcome: Mutex::new(None),
+            ready: Condvar::new(),
+        });
+        let owns = {
+            let mut execution = self.execution.lock().expect("executor lock poisoned");
+            if execution.poisoned {
+                return Err(PoisonedInput(input));
+            }
+            execution.inputs.push_back((input, Arc::clone(&completion)));
+            if execution.running {
+                false
+            } else {
+                execution.running = true;
+                true
+            }
+        };
+        if owns {
+            self.drain(handler);
+        }
+        Ok(TurnReceipt(completion))
+    }
+
+    fn drain<H>(&self, handler: &H)
+    where
+        H: OutputHandler<M::Output>,
+    {
+        let mut ownership = SerializedOwnership::new(&self.execution);
+        loop {
+            let Some((machine, input, completion)) = ownership.take_turn() else {
+                return;
+            };
+            let (output, successor) = machine.step(input);
+            ownership.install(successor, &completion);
+            handler.handle(output);
+            complete(&completion, TurnOutcome::Completed);
+            ownership.turn_completed();
+        }
+    }
+}
+
+struct SerializedOwnership<'a, M: Machine> {
+    execution: &'a Mutex<SerializedExecution<M>>,
+    active: Option<Arc<TurnCompletion>>,
+    armed: bool,
+}
+
+impl<'a, M: Machine> SerializedOwnership<'a, M> {
+    fn new(execution: &'a Mutex<SerializedExecution<M>>) -> Self {
+        Self {
+            execution,
+            active: None,
+            armed: true,
+        }
+    }
+
+    fn take_turn(&mut self) -> Option<(M, M::Input, Arc<TurnCompletion>)> {
+        let mut execution = self.execution.lock().expect("executor lock poisoned");
+        let Some((input, completion)) = execution.inputs.pop_front() else {
+            execution.running = false;
+            self.armed = false;
+            return None;
+        };
+        let machine = execution.machine.take().expect("executor machine missing");
+        self.active = Some(Arc::clone(&completion));
+        Some((machine, input, completion))
+    }
+
+    fn install(&self, machine: M, completion: &Arc<TurnCompletion>) {
+        self.execution
+            .lock()
+            .expect("executor lock poisoned")
+            .machine = Some(machine);
+        debug_assert!(Arc::ptr_eq(
+            self.active.as_ref().expect("active turn"),
+            completion
+        ));
+    }
+
+    fn turn_completed(&mut self) {
+        self.active = None;
+    }
+}
+
+impl<M: Machine> Drop for SerializedOwnership<'_, M> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut execution = self
+            .execution
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        execution.running = false;
+        execution.poisoned = true;
+        if let Some(active) = self.active.take() {
+            complete(&active, TurnOutcome::Poisoned);
+        }
+        execution
+            .inputs
+            .drain(..)
+            .for_each(|(_, receipt)| complete(&receipt, TurnOutcome::Poisoned));
+    }
+}
+
+/// Transition-linearized execution with separately ordered output dispatch.
+pub struct LinearizedExecutor<M>
+where
+    M: Machine,
+    M::Output: OutputEvidence,
+    <M::Output as OutputEvidence>::Evidence: Clone,
+{
+    execution: Mutex<LinearizedExecution<M, M::Output, <M::Output as OutputEvidence>::Evidence>>,
+}
+
+struct LinearizedExecution<M, O, E> {
+    machine: Option<M>,
+    outputs: VecDeque<O>,
+    evidence: Option<E>,
+    dispatching: bool,
+}
+
+impl<M> LinearizedExecutor<M>
+where
+    M: Machine,
+    M::Output: OutputEvidence,
+    <M::Output as OutputEvidence>::Evidence: Clone,
+{
+    /// Construct an executor with an empty output queue.
+    #[must_use]
+    pub fn new(machine: M) -> Self {
+        Self {
+            execution: Mutex::new(LinearizedExecution {
+                machine: Some(machine),
+                outputs: VecDeque::new(),
+                evidence: None,
+                dispatching: false,
+            }),
+        }
+    }
+
+    /// Advance and enqueue one output at the same linearization point.
+    ///
+    /// # Panics
+    ///
+    /// Panics after synchronization poison or a transition panic that consumed
+    /// the affine machine state.
+    pub fn submit(&self, input: M::Input) -> <M::Output as OutputEvidence>::Evidence {
         let mut execution = self.execution.lock().expect("executor lock poisoned");
         let machine = execution.machine.take().expect("executor machine missing");
         let (output, successor) = machine.step(input);
-        let observed = observe(&output, &successor);
+        let evidence = output.evidence();
+        execution.evidence = Some(evidence.clone());
         execution.machine = Some(successor);
         execution.outputs.push_back(output);
-        observed
+        evidence
     }
 
-    /// Inspect the current machine under the same synchronization as advances.
-    ///
-    /// The observer must be short and must not call back into this executor.
-    ///
-    /// # Panics
-    ///
-    /// Panics after synchronization poison or if a transition panic consumed
-    /// the current machine value.
-    pub fn inspect<T>(&self, observe: impl FnOnce(&M) -> T) -> T {
-        let execution = self.execution.lock().expect("executor lock poisoned");
-        observe(
-            execution
-                .machine
-                .as_ref()
-                .expect("executor machine missing"),
-        )
-    }
-
-    /// Interpret every currently or reentrantly queued output in transition order.
-    ///
-    /// Concurrent calls return when another caller already owns interpretation.
-    /// The active caller continues until the ordered queue is empty.
+    /// Clone the evidence installed by the latest linearized transition.
     ///
     /// # Panics
     ///
     /// Panics if executor synchronization was poisoned.
-    pub fn interpret_pending<H>(&self, interpreter: &H)
+    #[must_use]
+    pub fn evidence(&self) -> Option<<M::Output as OutputEvidence>::Evidence>
     where
-        H: OutputInterpreter<M::Output>,
+        <M::Output as OutputEvidence>::Evidence: Clone,
     {
-        {
-            let mut execution = self.execution.lock().expect("executor lock poisoned");
-            if execution.handling {
-                return;
-            }
-            execution.handling = true;
-        }
-        while let Some(output) = self.next_output() {
-            interpreter.handle(output);
-        }
+        self.execution
+            .lock()
+            .expect("executor lock poisoned")
+            .evidence
+            .clone()
     }
 
-    fn next_output(&self) -> Option<M::Output> {
-        let mut execution = self.execution.lock().expect("executor lock poisoned");
-        if let Some(output) = execution.outputs.pop_front() {
-            Some(output)
-        } else {
-            execution.handling = false;
-            None
+    /// Dispatch queued outputs until empty, or contribute them to another owner.
+    ///
+    /// A return value of `false` means another caller owns dispatch and this
+    /// call is fire-and-forget; it does not mean the caller's output completed.
+    /// If a handler panics, its owned output is dropped exactly once and a later
+    /// call resumes with the remaining queue.
+    pub fn dispatch_pending<H>(&self, handler: &H) -> bool
+    where
+        H: OutputHandler<M::Output>,
+    {
+        let mut ownership = DispatchOwnership::acquire(&self.execution);
+        if !ownership.acquired {
+            return false;
         }
+        while let Some(output) = ownership.next() {
+            handler.handle(output);
+        }
+        true
     }
 }
 
-#[cfg(test)]
+struct DispatchOwnership<'a, M, O, E> {
+    execution: &'a Mutex<LinearizedExecution<M, O, E>>,
+    acquired: bool,
+}
+
+impl<'a, M, O, E> DispatchOwnership<'a, M, O, E> {
+    fn acquire(execution: &'a Mutex<LinearizedExecution<M, O, E>>) -> Self {
+        let acquired = {
+            let mut state = execution.lock().expect("executor lock poisoned");
+            if state.dispatching {
+                false
+            } else {
+                state.dispatching = true;
+                true
+            }
+        };
+        Self {
+            execution,
+            acquired,
+        }
+    }
+
+    fn release(&mut self) {
+        if self.acquired {
+            self.execution
+                .lock()
+                .expect("executor lock poisoned")
+                .dispatching = false;
+            self.acquired = false;
+        }
+    }
+
+    fn next(&mut self) -> Option<O> {
+        let mut state = self.execution.lock().expect("executor lock poisoned");
+        let output = state.outputs.pop_front();
+        if output.is_none() {
+            state.dispatching = false;
+            self.acquired = false;
+        }
+        output
+    }
+}
+
+impl<M, O, E> Drop for DispatchOwnership<'_, M, O, E> {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+#[cfg(all(test, not(loom)))]
 mod tests {
-    use std::sync::Mutex;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::{Arc, Mutex, Weak};
 
-    use bombay_transition::{Base, Topology};
+    use bombay_transition::{Base, Topology, Vertex, VertexId};
 
-    use super::MachineExecutor;
+    use super::{
+        LinearizedExecutor, OutputEvidence, OutputHandler, SerializedExecutor, TurnOutcome,
+    };
 
-    const EMPTY: Topology = Topology {
-        name: "sum",
-        initial: bombay_transition::VertexId(0),
-        vertices: &[],
+    const VERTICES: &[Vertex] = &[Vertex {
+        id: VertexId(0),
+        label: "ready",
+    }];
+    const TOPOLOGY: Topology = Topology {
+        name: "test",
+        initial: VertexId(0),
+        vertices: VERTICES,
         transitions: &[],
     };
 
+    #[derive(Debug)]
+    struct Output(u8);
+
+    impl OutputEvidence for Output {
+        type Evidence = u8;
+        fn evidence(&self) -> Self::Evidence {
+            self.0
+        }
+    }
+
+    fn machine() -> Base<u8, impl FnMut(u8, u8) -> (Output, u8), u8, Output> {
+        Base::new(0, TOPOLOGY.validated().unwrap(), |state, input| {
+            (Output(input), state + input)
+        })
+    }
+
     #[test]
-    fn outputs_retain_transition_order() {
-        let executor = MachineExecutor::new(Base::new(0_u8, EMPTY, |state: u8, input: u8| {
-            (input, state.wrapping_add(input))
-        }));
-        executor.submit(1, |_, _| ());
-        executor.submit(2, |_, _| ());
-        executor.submit(3, |_, _| ());
-        let outputs = Mutex::new(Vec::new());
-        executor.interpret_pending(&|output| outputs.lock().unwrap().push(output));
-        assert_eq!(*outputs.lock().unwrap(), [1, 2, 3]);
+    fn serialized_turns_finish_effects_before_the_next_transition() {
+        let executor = SerializedExecutor::new(machine());
+        let trace = Mutex::new(Vec::new());
+        let receipt = executor
+            .submit(1, &|output: Output| trace.lock().unwrap().push(output.0))
+            .unwrap();
+        assert_eq!(receipt.wait(), TurnOutcome::Completed);
+        assert_eq!(*trace.lock().unwrap(), [1]);
+    }
+
+    type TestMachine = Base<u8, fn(u8, u8) -> (Output, u8), u8, Output>;
+
+    struct ReentrantHandler {
+        executor: Weak<SerializedExecutor<TestMachine>>,
+        trace: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl OutputHandler<Output> for ReentrantHandler {
+        fn handle(&self, output: Output) {
+            self.trace.lock().unwrap().push(output.0);
+            if output.0 == 1 {
+                let executor = self.executor.upgrade().unwrap();
+                let receipt = executor.submit(2, self).unwrap();
+                assert_eq!(receipt.outcome(), None);
+            }
+        }
+    }
+
+    #[test]
+    fn reentrant_serialized_submission_waits_for_current_handler() {
+        fn transition(state: u8, input: u8) -> (Output, u8) {
+            (Output(input), state + input)
+        }
+        let executor = Arc::new(SerializedExecutor::new(Base::new(
+            0,
+            TOPOLOGY.validated().unwrap(),
+            transition as fn(u8, u8) -> (Output, u8),
+        )));
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let handler = ReentrantHandler {
+            executor: Arc::downgrade(&executor),
+            trace: Arc::clone(&trace),
+        };
+        assert_eq!(
+            executor.submit(1, &handler).unwrap().wait(),
+            TurnOutcome::Completed
+        );
+        assert_eq!(*trace.lock().unwrap(), [1, 2]);
+    }
+
+    #[test]
+    fn linearized_dispatch_resumes_after_handler_panic() {
+        let executor = LinearizedExecutor::new(machine());
+        assert_eq!(executor.submit(1), 1);
+        assert_eq!(executor.submit(2), 2);
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                executor.dispatch_pending(&|_: Output| panic!("handler"));
+            }))
+            .is_err()
+        );
+        let seen = Mutex::new(Vec::new());
+        assert!(executor.dispatch_pending(&|output: Output| seen.lock().unwrap().push(output.0)));
+        assert_eq!(*seen.lock().unwrap(), [2]);
+    }
+
+    #[test]
+    fn serialized_handler_panic_poisons_future_submissions() {
+        let executor = SerializedExecutor::new(machine());
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                let _ = executor.submit(1, &|_: Output| panic!("handler"));
+            }))
+            .is_err()
+        );
+        let Err(rejected) = executor.submit(2, &|_: Output| {}) else {
+            panic!("poisoned executor accepted input")
+        };
+        assert_eq!(rejected.0, 2);
+    }
+}
+
+#[cfg(all(test, loom))]
+mod loom_tests {
+    use loom::sync::atomic::{AtomicUsize, Ordering};
+    use loom::sync::{Arc, Mutex};
+    use loom::thread;
+
+    use bombay_transition::{Base, Topology, Vertex, VertexId};
+
+    use super::{LinearizedExecutor, OutputEvidence, SerializedExecutor, TurnOutcome};
+
+    const VERTICES: &[Vertex] = &[Vertex {
+        id: VertexId(0),
+        label: "ready",
+    }];
+    const TOPOLOGY: Topology = Topology {
+        name: "loom",
+        initial: VertexId(0),
+        vertices: VERTICES,
+        transitions: &[],
+    };
+
+    struct Output(usize, Arc<AtomicUsize>);
+
+    impl Drop for Output {
+        fn drop(&mut self) {
+            self.1.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl OutputEvidence for Output {
+        type Evidence = usize;
+
+        fn evidence(&self) -> Self::Evidence {
+            self.0
+        }
+    }
+
+    #[test]
+    fn real_linearized_executor_handles_submit_dispatch_boundary() {
+        loom::model(|| {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let machine_drops = Arc::clone(&drops);
+            let machine = Base::new(0, TOPOLOGY.validated().unwrap(), move |state, input| {
+                (Output(input, Arc::clone(&machine_drops)), state + input)
+            });
+            let executor = Arc::new(LinearizedExecutor::new(machine));
+            let seen = Arc::new(Mutex::new(Vec::new()));
+
+            let submitter = {
+                let executor = Arc::clone(&executor);
+                thread::spawn(move || {
+                    executor.submit(1);
+                    executor.submit(2);
+                })
+            };
+            let dispatcher = {
+                let executor = Arc::clone(&executor);
+                let seen = Arc::clone(&seen);
+                thread::spawn(move || {
+                    executor.dispatch_pending(&|output: Output| {
+                        seen.lock().unwrap().push(output.0);
+                    });
+                })
+            };
+            submitter.join().unwrap();
+            dispatcher.join().unwrap();
+            executor.dispatch_pending(&|output: Output| {
+                seen.lock().unwrap().push(output.0);
+            });
+            assert_eq!(*seen.lock().unwrap(), [1, 2]);
+            assert_eq!(drops.load(Ordering::SeqCst), 2);
+        });
+    }
+
+    #[test]
+    fn real_serialized_executor_keeps_each_turn_contiguous() {
+        loom::model(|| {
+            let trace = Arc::new(Mutex::new(Vec::new()));
+            let machine_trace = Arc::clone(&trace);
+            let machine = Base::new((), TOPOLOGY.validated().unwrap(), move |(), input| {
+                machine_trace.lock().unwrap().push(input * 10);
+                (input, ())
+            });
+            let executor = Arc::new(SerializedExecutor::new(machine));
+            let mut threads = Vec::new();
+            for input in [1, 2] {
+                let executor = Arc::clone(&executor);
+                let trace = Arc::clone(&trace);
+                threads.push(thread::spawn(move || {
+                    let receipt = executor
+                        .submit(input, &|output| {
+                            trace.lock().unwrap().push(output * 10 + 1);
+                        })
+                        .unwrap();
+                    assert_eq!(receipt.wait(), TurnOutcome::Completed);
+                }));
+            }
+            threads
+                .into_iter()
+                .for_each(|thread| thread.join().unwrap());
+            let trace = trace.lock().unwrap();
+            assert!(matches!(
+                trace.as_slice(),
+                [10, 11, 20, 21] | [20, 21, 10, 11]
+            ));
+        });
     }
 }
