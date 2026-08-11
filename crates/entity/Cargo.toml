@@ -20,6 +20,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 loom = "0.7.2"
+parking_lot = "0.12"
 
 [lints]
 workspace = true

@@ -84,7 +84,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 - Miri: unavailable on pinned stable 1.96 toolchain. Not actionable.
 - EntityBehavior/forward_optional_event! folding: blocked on behavior-crate capabilities
   (external dep) — research only, no change in this workspace.
-- H29 parking_lot: user rule prefers parking_lot::Mutex where lock results are immediately
+- H29 parking_lot: KEPT (E19) — test harnesses migrated wholesale.: user rule prefers parking_lot::Mutex where lock results are immediately
   unwrapped. Production driver relies on std poison semantics (SerializedExecutor recovery) and
   entity escalates poison deliberately — do NOT migrate those. Candidate scope: test harnesses
   only, as one wholesale convention migration (never mixed). Research loom interaction first:
