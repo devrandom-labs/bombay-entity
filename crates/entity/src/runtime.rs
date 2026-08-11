@@ -208,9 +208,9 @@ where
     /// Returns [`DirectoryError::InvalidShardCount`] for a shard count that is
     /// not a power of two.
     pub fn new(config: DirectoryConfig, actor_runtime: R) -> Result<Self, DirectoryError<C>> {
-        let directory: LocalDirectory<I, PendingCommand<C>, R::Endpoint, R::Lease> =
-            LocalDirectory::<I, PendingCommand<C>, R::Endpoint, R::Lease>::new(config).map_err(
-                |error| match error {
+        let directory =
+            LocalDirectory::new(config).map_err(|error: DirectoryError<PendingCommand<C>>| {
+                match error {
                     DirectoryError::InvalidShardCount => DirectoryError::InvalidShardCount,
                     DirectoryError::ActivationIdsExhausted(pending) => {
                         DirectoryError::ActivationIdsExhausted(pending.command)
@@ -218,8 +218,8 @@ where
                     DirectoryError::DispatchIdsExhausted(pending) => {
                         DirectoryError::DispatchIdsExhausted(pending.command)
                     }
-                },
-            )?;
+                }
+            })?;
         Ok(Self {
             inner: Arc::new(Runtime {
                 directory,

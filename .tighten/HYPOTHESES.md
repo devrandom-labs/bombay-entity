@@ -75,7 +75,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 ## P6 — hygiene
 - H27 workspace: KEPT (E13). Cargo.toml missing name/version → 3 crane eval warnings in gate. Add
   workspace.package.version. Zero-risk.
-- H28 redundant type annotation runtime.rs:165 (turbofish suffices); driver redundant where-clause
+- H28 redundant: KEPT (E14). type annotation runtime.rs:165 (turbofish suffices); driver redundant where-clause
   repetition (:320-322). Contract: minimize explicit type specification where inference is clear.
 
 ## Explicitly deferred / rejected at intake

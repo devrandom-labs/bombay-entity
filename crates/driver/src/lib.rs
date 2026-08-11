@@ -335,10 +335,7 @@ where
     ///
     /// Panics if executor synchronization was poisoned.
     #[must_use]
-    pub fn evidence(&self) -> Option<<M::Output as OutputEvidence>::Evidence>
-    where
-        <M::Output as OutputEvidence>::Evidence: Clone,
-    {
+    pub fn evidence(&self) -> Option<<M::Output as OutputEvidence>::Evidence> {
         self.execution
             .lock()
             .expect("executor lock poisoned")
