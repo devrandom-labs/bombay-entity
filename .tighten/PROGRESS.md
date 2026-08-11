@@ -39,3 +39,15 @@
 
 ## Next
 P2 sentinels: H08 (DirectoryOutput.dispatch_id Option split), H09 (machine: Option<M> mid-step), H10-H12. Then H26 bench-noise prerequisite before P3/P4 perf work. New: dispatch_pending -> bool is a boolean protocol result (convert to enum or justify).
+
+## Convergence round 1 (2026-08-11)
+- E18 62ee9e7: entity-loom gate check. E19 REVERTED 86f873a (operator dismissed parking_lot rule).
+- E20 8f9be92: dispatch move-only control flow, 4 expects gone.
+- Adversarial pass 1 FALSIFIED fixed point with 8 findings; handled:
+  E21 6201a1a fix(executor): dispatch guard drop poison-abort (falsifier SIGABRT-verified).
+  E22-E26 3c70501: must_use seam, export trim, doc diagram, len proof.
+  E23 75a39e2: removable_activation duplicated authority removed.
+  E24 356cf4a: absent-slot stack reduce (stale callbacks -70%, hot paths parity).
+  H32 recorded contract-blocked. Loom panic falsifiers infeasible (generator TLS abort) — std-gate tests instead.
+- Final A/B vs baseline: active parity, contended within band, stale -70%. SCORE 994132 -> 994895.
+- Next: second fresh whole-workspace audit; if clean, verify contract items and declare candidate fixed point.

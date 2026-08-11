@@ -62,3 +62,10 @@ evidence() accessor contract.
 protocol.rs:139 allocates once per passivation (cold by design), and the
 behavior-crate port takes ownership of a Vec<Delivery>. No alternative shape
 without changing the external port.
+
+## H32 retire_stale outstanding_reservations: 0 (contract-blocked, 2026-08-11)
+Adversary finding: RetirementMode::Forced(DrainFailure{stage: Retirement,
+outstanding_reservations: 0}) fabricates a count for an untracked stale
+incarnation. The honest encoding (Option<usize> or a count-free variant)
+crosses the finalized SlotEffect/RetirementMode algebra; not landable as
+implementation tightening. Recorded, not actionable in this loop.
