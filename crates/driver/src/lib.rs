@@ -407,7 +407,14 @@ impl<'a, M, O, E> DispatchOwnership<'a, M, O, E> {
 impl<M, O, E> Drop for DispatchOwnership<'_, M, O, E> {
     fn drop(&mut self) {
         if let Some(execution) = self.execution.take() {
-            execution.lock().expect("executor lock poisoned").dispatch = DispatchState::Idle;
+            // This drop can run while its own `next` unwinds after another
+            // thread poisoned the executor; a second panic here would abort
+            // the process. Recovering the guard preserves the documented
+            // panic-only contract.
+            execution
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .dispatch = DispatchState::Idle;
         }
     }
 }
@@ -541,6 +548,74 @@ mod tests {
             panic!("poisoned executor accepted input")
         };
         assert_eq!(rejected.0, 2);
+    }
+
+    impl super::OutputEvidence for usize {
+        type Evidence = usize;
+
+        fn evidence(&self) -> Self::Evidence {
+            *self
+        }
+    }
+
+    #[test]
+    fn dispatch_guard_drop_recovers_during_poison_unwind() {
+        use std::sync::Condvar;
+        use std::thread;
+
+        let machine = Base::new(0_usize, TOPOLOGY.validated().unwrap(), |state, input| {
+            assert_ne!(input, 9, "transition failure");
+            (input, state + input)
+        });
+        let executor = Arc::new(LinearizedExecutor::new(machine));
+        assert_eq!(executor.submit(1), 1);
+        let gate = Arc::new((Mutex::new((false, false)), Condvar::new()));
+
+        let dispatcher = {
+            let executor = Arc::clone(&executor);
+            let gate = Arc::clone(&gate);
+            thread::spawn(move || {
+                catch_unwind(AssertUnwindSafe(|| {
+                    executor.dispatch_pending(&|_output| {
+                        let (lock, ready) = &*gate;
+                        let mut phase = lock.lock().unwrap();
+                        phase.0 = true;
+                        ready.notify_one();
+                        // Hold dispatch ownership until the transition panic
+                        // has landed; returning loops into next(), which then
+                        // observes the poisoned executor.
+                        while !phase.1 {
+                            phase = ready.wait(phase).unwrap();
+                        }
+                    });
+                }))
+            })
+        };
+        {
+            let (lock, ready) = &*gate;
+            let mut phase = lock.lock().unwrap();
+            while !phase.0 {
+                phase = ready.wait(phase).unwrap();
+            }
+        }
+        // The dispatcher holds dispatch ownership inside the handler; this
+        // transition panic poisons the executor underneath it.
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            executor.submit(9);
+        }));
+        {
+            let (lock, ready) = &*gate;
+            *lock.lock().unwrap() = (true, true);
+            ready.notify_one();
+        }
+        let outcome = dispatcher.join().expect("dispatcher thread aborted");
+        assert!(outcome.is_err(), "next() must observe the poisoned lock");
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                executor.submit(2);
+            }))
+            .is_err()
+        );
     }
 }
 
