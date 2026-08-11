@@ -13,10 +13,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   reservation counting exactness. Falsifier: any observable count differs on existing tests.
   Note: reserve overflow is unreachable at usize scale — first check whether the honest fix is a
   documented unreachable branch, NOT a new error variant (probe before choosing).
-- H03 error discard: runtime.rs:347 `Err(_)` drops LocalEntityRuntime::ActivationError — wrap via
+- H03 error discard: KEPT-MINIMAL (E03) — propagation rejected as finalized-algebra boundary. runtime.rs:347 `Err(_)` drops LocalEntityRuntime::ActivationError — wrap via
   #[source]/#from into the activation-failure path. Falsifier: changes which failures reach the
   dispatch caller.
-- H04 atomics: directory.rs:499 `fetch_update(Relaxed, Relaxed)` — write the structural proof
+- H04 atomics: KEPT (E04) — proof documented. directory.rs:499 `fetch_update(Relaxed, Relaxed)` — write the structural proof
   (shard mutex synchronizes all slot state; IDs are opaque tokens) as a doc comment, or switch
   to Acquire/Release if proof fails. Falsifier: proof requires happens-before the code lacks.
 

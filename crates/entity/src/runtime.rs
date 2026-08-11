@@ -349,7 +349,10 @@ where
                     activated.endpoint,
                     activated.lease,
                 ),
-                Err(_) => runtime
+                // The finalized lifecycle algebra consumes only the fact of
+                // failure; the typed activation error is the actor runtime's
+                // own diagnostic boundary and is deliberately not propagated.
+                Err(_activation_error) => runtime
                     .directory
                     .activation_failed(&entity_id, activation_id),
             };

@@ -506,6 +506,13 @@ impl<C, E, L> OutputEvidence for LifecycleOutput<C, E, L> {
     }
 }
 
+/// Allocate the next non-zero identity from a monotonic sequence.
+///
+/// `Relaxed` suffices by structural argument: the only requirement is
+/// uniqueness, which the atomic read-modify-write modification order already
+/// guarantees for any ordering. No non-atomic state is published through these
+/// counters — every identity is an opaque token, and all slot state it later
+/// names is synchronized by the shard and executor mutexes instead.
 fn allocate(sequence: &AtomicU64) -> Option<NonZeroU64> {
     sequence
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
