@@ -25,8 +25,10 @@ pub trait Machine<I> {
     /// Output produced for one input.
     type Output;
 
-    /// Advance the machine by one input.
-    fn step(&mut self, input: I) -> Self::Output;
+    /// Consume one input and return the output plus successor machine.
+    fn step(self, input: I) -> (Self::Output, Self)
+    where
+        Self: Sized;
 
     /// Fold the retained composition tree with a structural interpreter.
     fn describe<V: Structure>(&self, visitor: &mut V) -> V::Output;
@@ -90,12 +92,25 @@ impl<S, F> Base<S, F> {
 
 impl<S, I, O, F> Machine<I> for Base<S, F>
 where
-    F: FnMut(&mut S, I) -> O,
+    F: FnMut(S, I) -> (O, S),
 {
     type Output = O;
 
-    fn step(&mut self, input: I) -> Self::Output {
-        (self.transition)(&mut self.state, input)
+    fn step(self, input: I) -> (Self::Output, Self) {
+        let Self {
+            state,
+            mut transition,
+            topology,
+        } = self;
+        let (output, state) = transition(state, input);
+        (
+            output,
+            Self {
+                state,
+                transition,
+                topology,
+            },
+        )
     }
 
     fn describe<V: Structure>(&self, visitor: &mut V) -> V::Output {
@@ -113,8 +128,10 @@ where
 {
     type Output = B::Output;
 
-    fn step(&mut self, input: I) -> Self::Output {
-        self.1.step(self.0.step(input))
+    fn step(self, input: I) -> (Self::Output, Self) {
+        let (middle, first) = self.0.step(input);
+        let (output, second) = self.1.step(middle);
+        (output, Self(first, second))
     }
 
     fn describe<V: Structure>(&self, visitor: &mut V) -> V::Output {
@@ -134,8 +151,13 @@ where
 {
     type Output = (A::Output, B::Output);
 
-    fn step(&mut self, (left, right): (I, J)) -> Self::Output {
-        (self.0.step(left), self.1.step(right))
+    fn step(self, (left, right): (I, J)) -> (Self::Output, Self) {
+        let (left_output, left_machine) = self.0.step(left);
+        let (right_output, right_machine) = self.1.step(right);
+        (
+            (left_output, right_output),
+            Self(left_machine, right_machine),
+        )
     }
 
     fn describe<V: Structure>(&self, visitor: &mut V) -> V::Output {
@@ -164,10 +186,16 @@ where
 {
     type Output = Either<A::Output, B::Output>;
 
-    fn step(&mut self, input: Either<I, J>) -> Self::Output {
+    fn step(self, input: Either<I, J>) -> (Self::Output, Self) {
         match input {
-            Either::Left(left) => Either::Left(self.0.step(left)),
-            Either::Right(right) => Either::Right(self.1.step(right)),
+            Either::Left(left) => {
+                let (output, machine) = self.0.step(left);
+                (Either::Left(output), Self(machine, self.1))
+            }
+            Either::Right(right) => {
+                let (output, machine) = self.1.step(right);
+                (Either::Right(output), Self(self.0, machine))
+            }
         }
     }
 
@@ -247,15 +275,17 @@ mod tests {
 
     #[test]
     fn sequential_machine_executes_and_retains_its_structure() {
-        let increment = Base::new(0_u8, topology("increment"), |state: &mut u8, input: u8| {
-            *state += input;
-            *state
+        let increment = Base::new(0_u8, topology("increment"), |state: u8, input: u8| {
+            let state = state + input;
+            (state, state)
         });
-        let double = Base::new((), topology("double"), |(): &mut (), input: u8| input * 2);
-        let mut machine = increment.then(double);
+        let double = Base::new((), topology("double"), |(), input: u8| (input * 2, ()));
+        let machine = increment.then(double);
 
-        assert_eq!(machine.step(3), 6);
-        assert_eq!(machine.step(1), 8);
+        let (output, machine) = machine.step(3);
+        assert_eq!(output, 6);
+        let (output, machine) = machine.step(1);
+        assert_eq!(output, 8);
         assert_eq!(
             machine.describe(&mut Count),
             Shape {

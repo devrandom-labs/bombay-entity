@@ -7,10 +7,13 @@ use core::ops::Add;
 use bombay_transition::{Decision, Reducer};
 
 mod inactive;
+mod machine;
 mod retiring;
 
 use inactive::decide_inactive;
 use retiring::decide_retiring;
+
+pub use machine::{LifecycleMachine, lifecycle_machine};
 
 /// Globally unique identity of one activation attempt and incarnation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
