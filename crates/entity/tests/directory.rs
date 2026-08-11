@@ -3,8 +3,8 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 
 use bombay_entity::{
-    ActivationId, DirectoryConfig, DispatchId, EffectInterpreter, EntityId, LocalDirectory,
-    Refusal, RetirementMode,
+    ActivationId, DirectoryConfig, DispatchId, DrainFailure, DrainStage, EffectInterpreter,
+    EntityId, LocalDirectory, Refusal, RetirementMode,
 };
 
 type Directory = LocalDirectory<u64, u64, u64, u64>;
@@ -247,5 +247,69 @@ fn reentrant_delivery_resolution_appends_fence_to_current_interpreter() {
     assert_eq!(
         runtime.actions.lock().unwrap().as_slice(),
         ["deliver", "deliver", "fence"]
+    );
+}
+
+#[test]
+fn forced_retirement_preserves_the_exact_failure_stage() {
+    let directory = Directory::new(DirectoryConfig::default()).unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(12);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap(), &runtime);
+    let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
+        panic!("activation not started");
+    };
+    directory.interpret(
+        directory.activation_succeeded(&entity_id, activation_id, 2, 3),
+        &runtime,
+    );
+    directory.interpret(
+        directory.delivery_resolved(&entity_id, activation_id, None),
+        &runtime,
+    );
+    directory.interpret(directory.begin_drain(&entity_id, activation_id), &runtime);
+    let failure = DrainFailure {
+        stage: DrainStage::FenceAcknowledgement,
+        outstanding_reservations: 0,
+    };
+    directory.interpret(
+        directory.force_drain(&entity_id, activation_id, failure),
+        &runtime,
+    );
+
+    assert!(runtime.0.lock().unwrap().iter().any(|action| matches!(
+        action,
+        Action::Retire(id, 3, RetirementMode::Forced(observed))
+            if *id == activation_id && *observed == failure
+    )));
+}
+
+#[test]
+fn stale_termination_cannot_remove_the_live_incarnation() {
+    let directory = Directory::new(DirectoryConfig::default()).unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(13);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap(), &runtime);
+    let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
+        panic!("activation not started");
+    };
+    directory.interpret(
+        directory.activation_succeeded(&entity_id, activation_id, 2, 3),
+        &runtime,
+    );
+    directory.interpret(
+        directory.terminated(&entity_id, activation(activation_id.get().get() + 1)),
+        &runtime,
+    );
+
+    assert_eq!(directory.len(), 1);
+    directory.interpret(directory.dispatch(entity_id, 9).unwrap(), &runtime);
+    assert!(
+        runtime
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|action| matches!(action, Action::Deliver(_, 9)))
     );
 }
