@@ -411,6 +411,78 @@ Loom, stress, and fuzz verification before performance specialization.
 
 ## Research basis
 
+### Concurrent directory workload and baseline
+
+The local directory is optimized for many logical identifiers with mostly
+independent traffic, while remaining correct when many callers contend on one
+hot identifier. The adversarial workload includes concurrent first dispatch,
+waiter cancellation during activation, delivery racing with passivation, stale
+activation and termination completions, and bounded drain failure. Lookup is
+expected to be short relative to activation, mailbox enqueue, and retirement.
+
+The first implementation uses a fixed power-of-two array of
+`Mutex<HashMap<EntityId<I>, Arc<Slot>>>` shards and a separate `Mutex` in each
+slot. A hash selects exactly one shard. The shard lock only finds, inserts, or
+conditionally removes an `Arc`; the slot lock only submits one fact to the pure
+lifecycle machine and installs its successor. Neither lock is held while an
+effect is interpreted. Poisoning is treated as an invariant violation rather
+than silently exposing partially updated state.
+
+This is a measured baseline, not an assertion that locks always outperform
+specialized maps. Shalev and Shavit's split-ordered lists provide lock-free
+expected-constant-time growth, and Maier, Sanders, and Dementiev demonstrate
+the importance of layout and workload when comparing concurrent hash tables.
+Those algorithms require substantially more resizing and reclamation machinery.
+Rust's standard `HashMap` already supplies a cache-conscious SwissTable lookup
+layout, while `Arc` safely delays slot reclamation until every operation drops
+its reference. Epoch or hazard-pointer reclamation therefore adds no required
+correctness property at this stage. A different table is justified only by
+retained directory benchmarks showing shard lookup or resize contention is
+material under the stated workloads.
+
+Rust 1.96 provides `Arc`, `Mutex`, `HashMap`, and lock-free `AtomicU64` on the
+supported 64-bit targets. Activation and dispatch sequences use relaxed atomic
+increments because uniqueness depends only on each atomic modification order;
+slot mutexes establish the state-transition happens-before relationships.
+Sequence wrap is rejected rather than reused, preventing an ABA-like identity.
+
+The directory linearization points refine the lifecycle points above:
+
+1. **Stable slot claim:** insertion of a newly allocated slot while holding its
+   shard lock. A losing caller discards its candidate and uses the installed
+   allocation.
+2. **Lifecycle fact:** replacement of the machine successor while holding the
+   slot lock. The emitted `TransitionEvidence` is retained with that decision.
+3. **Admission close:** installation of the `Draining` successor for
+   `BeginDrain`; later dispatch facts observe closed admission.
+4. **Effect order:** one interpreter ownership token per slot serializes an
+   ordered effect queue. Follow-up facts append effects through the same path,
+   so reentrancy cannot start a second interpreter.
+5. **Removal:** while holding the shard lock, removal occurs only if
+   `Arc::ptr_eq` matches the captured slot and the slot still represents the
+   requested activation identity. A caller that already cloned the old `Arc`
+   remains memory-safe but cannot mutate a replacement entry.
+
+Primary sources considered are:
+
+- Ori Shalev and Nir Shavit, “Split-Ordered Lists: Lock-Free Extensible Hash
+  Tables,” *Journal of the ACM* 53(3), 2006,
+  <https://doi.org/10.1145/872035.872049>.
+- Tobias Maier, Peter Sanders, and Roman Dementiev, “Concurrent Hash Tables:
+  Fast and General?(!),” 2016, <https://arxiv.org/abs/1601.04017>.
+- Philip A. Bernstein et al., “Orleans: Distributed Virtual Actors for
+  Programmability and Scalability,” Microsoft Research Technical Report
+  MSR-TR-2014-41, 2014,
+  <https://www.microsoft.com/en-us/research/publication/orleans-distributed-virtual-actors-for-programmability-and-scalability/>.
+- Clovis Eberhart and Tom Hirschowitz, “What is a Machine? An Essay on the
+  Composable Representable Executable Machines,” 2023,
+  <https://arxiv.org/abs/2307.09090>.
+
+The standard-library capability check uses the Rust 1.96 documentation for
+[`std::sync`](https://doc.rust-lang.org/1.96.0/std/sync/index.html),
+[`AtomicU64`](https://doc.rust-lang.org/1.96.0/std/sync/atomic/type.AtomicU64.html),
+and [`HashMap`](https://doc.rust-lang.org/1.96.0/std/collections/struct.HashMap.html).
+
 - [Orleans grain directory](https://learn.microsoft.com/en-us/dotnet/orleans/host/grain-directory)
 - [Orleans virtual actor technical report](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Orleans-MSR-TR-2014-41.pdf)
 - [Apache Pekko Cluster Sharding](https://pekko.apache.org/docs/pekko/1.0.2/typed/cluster-sharding.html)
