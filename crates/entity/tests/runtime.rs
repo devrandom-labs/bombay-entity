@@ -41,6 +41,8 @@ struct TestRuntimeState {
     fail_delivery: AtomicBool,
     delivered: Mutex<Vec<u64>>,
     activation_gate: Mutex<Option<Arc<ActivationGate>>>,
+    fences: AtomicUsize,
+    retirements: AtomicUsize,
 }
 
 impl TestRuntime {
@@ -51,6 +53,8 @@ impl TestRuntime {
                 fail_delivery: AtomicBool::new(false),
                 delivered: Mutex::new(Vec::new()),
                 activation_gate: Mutex::new(None),
+                fences: AtomicUsize::new(0),
+                retirements: AtomicUsize::new(0),
             }),
         }
     }
@@ -91,10 +95,13 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
     }
 
     async fn fence(&self, _: Self::Endpoint) -> Result<(), FenceFailure> {
+        self.state.fences.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
-    async fn retire(&self, _: Self::Lease, _: RetirementMode) {}
+    async fn retire(&self, _: Self::Lease, _: RetirementMode) {
+        self.state.retirements.fetch_add(1, Ordering::Release);
+    }
 }
 
 struct ActivationGate {
@@ -196,4 +203,24 @@ fn canceling_dispatch_does_not_cancel_shared_activation_or_deliver_command() {
 
     assert_eq!(observations.state.activations.load(Ordering::Relaxed), 1);
     assert!(observations.state.delivered.lock().unwrap().is_empty());
+}
+
+#[test]
+fn passivation_fences_and_retires_the_exact_incarnation() {
+    let actor_runtime = TestRuntime::new();
+    let observations = actor_runtime.clone();
+    let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime).unwrap();
+    let entity_id = EntityId::new(6);
+    block_on(entities.dispatch(entity_id, 1)).unwrap();
+
+    assert!(entities.passivate(&entity_id));
+    for _ in 0..100 {
+        if observations.state.retirements.load(Ordering::Acquire) == 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(observations.state.fences.load(Ordering::Relaxed), 1);
+    assert_eq!(observations.state.retirements.load(Ordering::Relaxed), 1);
+    assert_eq!(observations.state.activations.load(Ordering::Relaxed), 1);
 }

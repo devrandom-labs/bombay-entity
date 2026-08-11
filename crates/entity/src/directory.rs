@@ -110,6 +110,11 @@ impl<C, E: Clone, L> Slot<C, E, L> {
             })
     }
 
+    fn activation_id(&self) -> Option<ActivationId> {
+        self.lifecycle
+            .inspect(|machine| machine.state().activation_id())
+    }
+
     fn mark_removable(&self, activation_id: ActivationId) {
         *self
             .removable_activation
@@ -366,6 +371,15 @@ where
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub(crate) fn current_activation(&self, entity_id: &EntityId<I>) -> Option<ActivationId> {
+        self.shards[self.shard_index(entity_id)]
+            .lock()
+            .expect("directory shard lock poisoned")
+            .get(entity_id)
+            .cloned()
+            .and_then(|slot| slot.activation_id())
     }
 
     fn submit_or_inactive(

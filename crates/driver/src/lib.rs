@@ -79,6 +79,19 @@ where
         observed
     }
 
+    /// Inspect the current machine under the same synchronization as advances.
+    ///
+    /// The observer must be short and must not call back into this driver.
+    ///
+    /// # Panics
+    ///
+    /// Panics after synchronization poison or if a transition panic consumed
+    /// the current machine value.
+    pub fn inspect<T>(&self, observe: impl FnOnce(&M) -> T) -> T {
+        let execution = self.execution.lock().expect("driver lock poisoned");
+        observe(execution.machine.as_ref().expect("driver machine missing"))
+    }
+
     /// Interpret every currently or reentrantly queued output in transition order.
     ///
     /// Concurrent calls return when another caller already owns interpretation.

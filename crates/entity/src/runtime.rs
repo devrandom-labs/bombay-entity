@@ -7,7 +7,8 @@ use std::task::{Context, Poll, Waker};
 
 use crate::{
     ActivationId, DirectoryConfig, DirectoryError, DispatchId, DrainFailure, DrainStage,
-    EffectInterpreter, EntityId, LocalDirectory, Refusal, RetirementMode,
+    EffectInterpreter, EntityId, LifecycleEdge, LocalDirectory, Refusal, RetirementMode,
+    TransitionEvidence,
 };
 
 /// Exact-incarnation capabilities returned by transactional activation.
@@ -232,6 +233,24 @@ where
             completed: false,
         }
         .await
+    }
+
+    /// Begin graceful passivation if the entity currently has an active incarnation.
+    ///
+    /// Admission closes at this call's lifecycle linearization point. Fence and
+    /// retirement work continues in directory-owned tasks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if directory synchronization was poisoned.
+    pub fn passivate(&self, entity_id: &EntityId<I>) -> bool {
+        let Some(activation_id) = self.inner.directory.current_activation(entity_id) else {
+            return false;
+        };
+        let output = self.inner.directory.begin_drain(entity_id, activation_id);
+        let started = output.evidence == TransitionEvidence::Traversed(LifecycleEdge::BeginDrain);
+        self.inner.directory.interpret(output, &self.inner);
+        started
     }
 }
 
