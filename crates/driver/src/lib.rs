@@ -113,8 +113,17 @@ pub struct SerializedExecutor<M: Machine> {
 struct SerializedExecution<M: Machine> {
     machine: Option<M>,
     inputs: VecDeque<(M::Input, Arc<TurnCompletion>)>,
-    running: bool,
-    poisoned: bool,
+    turn: TurnState,
+}
+
+/// Ownership phase of the serialized turn drain.
+enum TurnState {
+    /// No caller is draining turns.
+    Idle,
+    /// One caller owns the drain loop.
+    Running,
+    /// A transition or handler panic poisoned the executor.
+    Poisoned,
 }
 
 impl<M: Machine> SerializedExecutor<M> {
@@ -125,8 +134,7 @@ impl<M: Machine> SerializedExecutor<M> {
             execution: Mutex::new(SerializedExecution {
                 machine: Some(machine),
                 inputs: VecDeque::new(),
-                running: false,
-                poisoned: false,
+                turn: TurnState::Idle,
             }),
         }
     }
@@ -160,15 +168,17 @@ impl<M: Machine> SerializedExecutor<M> {
         });
         let owns = {
             let mut execution = self.execution.lock().expect("executor lock poisoned");
-            if execution.poisoned {
-                return Err(PoisonedInput(input));
-            }
-            execution.inputs.push_back((input, Arc::clone(&completion)));
-            if execution.running {
-                false
-            } else {
-                execution.running = true;
-                true
+            match execution.turn {
+                TurnState::Poisoned => return Err(PoisonedInput(input)),
+                TurnState::Running => {
+                    execution.inputs.push_back((input, Arc::clone(&completion)));
+                    false
+                }
+                TurnState::Idle => {
+                    execution.inputs.push_back((input, Arc::clone(&completion)));
+                    execution.turn = TurnState::Running;
+                    true
+                }
             }
         };
         if owns {
@@ -196,34 +206,35 @@ impl<M: Machine> SerializedExecutor<M> {
 }
 
 struct SerializedOwnership<'a, M: Machine> {
-    execution: &'a Mutex<SerializedExecution<M>>,
+    execution: Option<&'a Mutex<SerializedExecution<M>>>,
     active: Option<Arc<TurnCompletion>>,
-    armed: bool,
 }
 
 impl<'a, M: Machine> SerializedOwnership<'a, M> {
     fn new(execution: &'a Mutex<SerializedExecution<M>>) -> Self {
         Self {
-            execution,
+            execution: Some(execution),
             active: None,
-            armed: true,
         }
     }
 
     fn take_turn(&mut self) -> Option<(M, M::Input, Arc<TurnCompletion>)> {
-        let mut execution = self.execution.lock().expect("executor lock poisoned");
-        let Some((input, completion)) = execution.inputs.pop_front() else {
-            execution.running = false;
-            self.armed = false;
+        let execution = self.execution?;
+        let mut state = execution.lock().expect("executor lock poisoned");
+        let Some((input, completion)) = state.inputs.pop_front() else {
+            state.turn = TurnState::Idle;
+            // Normal exhaustion disarms the guard: dropping it must not poison.
+            self.execution = None;
             return None;
         };
-        let machine = execution.machine.take().expect("executor machine missing");
+        let machine = state.machine.take().expect("executor machine missing");
         self.active = Some(Arc::clone(&completion));
         Some((machine, input, completion))
     }
 
     fn install(&self, machine: M, completion: &Arc<TurnCompletion>) {
         self.execution
+            .expect("ownership armed")
             .lock()
             .expect("executor lock poisoned")
             .machine = Some(machine);
@@ -240,19 +251,17 @@ impl<'a, M: Machine> SerializedOwnership<'a, M> {
 
 impl<M: Machine> Drop for SerializedOwnership<'_, M> {
     fn drop(&mut self) {
-        if !self.armed {
+        let Some(execution) = self.execution.take() else {
             return;
-        }
-        let mut execution = self
-            .execution
+        };
+        let mut state = execution
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        execution.running = false;
-        execution.poisoned = true;
+        state.turn = TurnState::Poisoned;
         if let Some(active) = self.active.take() {
             complete(&active, TurnOutcome::Poisoned);
         }
-        execution
+        state
             .inputs
             .drain(..)
             .for_each(|(_, receipt)| complete(&receipt, TurnOutcome::Poisoned));
@@ -273,7 +282,15 @@ struct LinearizedExecution<M, O, E> {
     machine: Option<M>,
     outputs: VecDeque<O>,
     evidence: Option<E>,
-    dispatching: bool,
+    dispatch: DispatchState,
+}
+
+/// Ownership phase of output dispatch.
+enum DispatchState {
+    /// No caller is dispatching queued outputs.
+    Idle,
+    /// One caller owns output dispatch.
+    Dispatching,
 }
 
 impl<M> LinearizedExecutor<M>
@@ -290,7 +307,7 @@ where
                 machine: Some(machine),
                 outputs: VecDeque::new(),
                 evidence: None,
-                dispatching: false,
+                dispatch: DispatchState::Idle,
             }),
         }
     }
@@ -339,10 +356,9 @@ where
     where
         H: OutputHandler<M::Output>,
     {
-        let mut ownership = DispatchOwnership::acquire(&self.execution);
-        if !ownership.acquired {
+        let Some(mut ownership) = DispatchOwnership::acquire(&self.execution) else {
             return false;
-        }
+        };
         while let Some(output) = ownership.next() {
             handler.handle(output);
         }
@@ -351,43 +367,31 @@ where
 }
 
 struct DispatchOwnership<'a, M, O, E> {
-    execution: &'a Mutex<LinearizedExecution<M, O, E>>,
-    acquired: bool,
+    execution: Option<&'a Mutex<LinearizedExecution<M, O, E>>>,
 }
 
 impl<'a, M, O, E> DispatchOwnership<'a, M, O, E> {
-    fn acquire(execution: &'a Mutex<LinearizedExecution<M, O, E>>) -> Self {
-        let acquired = {
-            let mut state = execution.lock().expect("executor lock poisoned");
-            if state.dispatching {
-                false
-            } else {
-                state.dispatching = true;
-                true
+    fn acquire(execution: &'a Mutex<LinearizedExecution<M, O, E>>) -> Option<Self> {
+        let mut state = execution.lock().expect("executor lock poisoned");
+        match state.dispatch {
+            DispatchState::Dispatching => None,
+            DispatchState::Idle => {
+                state.dispatch = DispatchState::Dispatching;
+                Some(Self {
+                    execution: Some(execution),
+                })
             }
-        };
-        Self {
-            execution,
-            acquired,
-        }
-    }
-
-    fn release(&mut self) {
-        if self.acquired {
-            self.execution
-                .lock()
-                .expect("executor lock poisoned")
-                .dispatching = false;
-            self.acquired = false;
         }
     }
 
     fn next(&mut self) -> Option<O> {
-        let mut state = self.execution.lock().expect("executor lock poisoned");
+        let execution = self.execution?;
+        let mut state = execution.lock().expect("executor lock poisoned");
         let output = state.outputs.pop_front();
         if output.is_none() {
-            state.dispatching = false;
-            self.acquired = false;
+            state.dispatch = DispatchState::Idle;
+            // An exhausted queue releases ownership; dropping must not repeat it.
+            self.execution = None;
         }
         output
     }
@@ -395,7 +399,9 @@ impl<'a, M, O, E> DispatchOwnership<'a, M, O, E> {
 
 impl<M, O, E> Drop for DispatchOwnership<'_, M, O, E> {
     fn drop(&mut self) {
-        self.release();
+        if let Some(execution) = self.execution.take() {
+            execution.lock().expect("executor lock poisoned").dispatch = DispatchState::Idle;
+        }
     }
 }
 
