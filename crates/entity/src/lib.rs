@@ -28,7 +28,9 @@ mod lifecycle;
 mod protocol;
 
 pub use bombay_transition::{Decision, Reducer};
-pub use directory::{DirectoryConfig, DirectoryError, DirectoryOutput, LocalDirectory};
+pub use directory::{
+    DirectoryConfig, DirectoryError, DirectoryOutput, EffectInterpreter, LocalDirectory,
+};
 pub use lifecycle::{
     ActivatingSlot, ActivationId, ActivationWaiter, ActiveSlot, DispatchId, DrainFailure,
     DrainProgress, DrainStage, DrainingSlot, EntitySlot, LIFECYCLE_TOPOLOGY, LifecycleEdge,
