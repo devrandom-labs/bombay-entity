@@ -24,3 +24,4 @@
 {"id":"E11","hypothesis":"H11","status":"kept","result":"LifecycleModel/lifecycle_model removed; LifecycleEdge::is_declared added; bounded trace test preserved; 48/48; gate green; SCORE 994929","finished":"2026-08-11"}
 {"id":"E12","hypothesis":"H26","change":"7 repetitions per workload, report min+median; output format gains _min/_median lines","falsifier":"median/min spread >20% on unchanged code indicates harness noise dominates","rollback":"git revert","status":"started","started":"2026-08-11"}
 {"id":"E12","hypothesis":"H26","status":"kept","result":"7 repetitions, min+median reported; min/median spread <=5% on unchanged code; deltas >5% now decision-grade","finished":"2026-08-11"}
+{"id":"E13","hypothesis":"H27","status":"kept","result":"workspace.package.version + crane metadata name; crate versions unified via workspace; 0 crane warnings; gate green","finished":"2026-08-11"}

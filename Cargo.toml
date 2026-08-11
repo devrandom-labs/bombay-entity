@@ -5,9 +5,13 @@ members = ["crates/driver", "crates/entity", "crates/transition"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.96"
+version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/devrandom-labs/bombay-entity"
 homepage = "https://github.com/devrandom-labs/bombay-entity"
+
+[workspace.metadata.crane]
+name = "bombay-entity"
 
 [workspace.dependencies]
 bombay-entity = { path = "crates/entity" }
