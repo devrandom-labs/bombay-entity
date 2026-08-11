@@ -1,9 +1,7 @@
 use std::future::Future;
 use std::pin::{Pin, pin};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-use parking_lot::Mutex;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 use std::time::Duration;
@@ -79,7 +77,7 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
         activation_id: ActivationId,
     ) -> Result<Activated<Self::Endpoint, Self::Lease>, Self::ActivationError> {
         self.state.activations.fetch_add(1, Ordering::Relaxed);
-        let gate = self.state.activation_gate.lock().clone();
+        let gate = self.state.activation_gate.lock().unwrap().clone();
         if let Some(gate) = gate {
             gate.wait().await;
         }
@@ -93,13 +91,13 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
         if self.state.fail_delivery.load(Ordering::Relaxed) {
             Err(command)
         } else {
-            self.state.delivered.lock().push(command);
+            self.state.delivered.lock().unwrap().push(command);
             Ok(())
         }
     }
 
     async fn fence(&self, _: Self::Endpoint) -> Result<(), FenceFailure> {
-        let gate = self.state.fence_gate.lock().clone();
+        let gate = self.state.fence_gate.lock().unwrap().clone();
         if let Some(gate) = gate {
             gate.wait().await;
         }
@@ -131,7 +129,7 @@ impl ActivationGate {
 
     fn open(&self) {
         self.open.store(true, Ordering::Release);
-        if let Some(waker) = self.waker.lock().take() {
+        if let Some(waker) = self.waker.lock().unwrap().take() {
             waker.wake();
         }
     }
@@ -146,7 +144,7 @@ impl Future for GateFuture {
         if self.0.open.load(Ordering::Acquire) {
             Poll::Ready(())
         } else {
-            *self.0.waker.lock() = Some(context.waker().clone());
+            *self.0.waker.lock().unwrap() = Some(context.waker().clone());
             if self.0.open.load(Ordering::Acquire) {
                 Poll::Ready(())
             } else {
@@ -165,7 +163,7 @@ fn application_dispatch_is_one_asynchronous_operation() {
     block_on(entities.dispatch(EntityId::new(42), 7)).unwrap();
 
     assert_eq!(observations.state.activations.load(Ordering::Relaxed), 1);
-    assert_eq!(*observations.state.delivered.lock(), [7]);
+    assert_eq!(*observations.state.delivered.lock().unwrap(), [7]);
 }
 
 #[test]
@@ -193,7 +191,7 @@ fn canceling_dispatch_does_not_cancel_shared_activation_or_deliver_command() {
     let actor_runtime = TestRuntime::new();
     let observations = actor_runtime.clone();
     let gate = ActivationGate::closed();
-    *actor_runtime.state.activation_gate.lock() = Some(Arc::clone(&gate));
+    *actor_runtime.state.activation_gate.lock().unwrap() = Some(Arc::clone(&gate));
     let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime).unwrap();
     let mut dispatch = Box::pin(entities.dispatch(EntityId::new(5), 91));
     let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
@@ -210,7 +208,7 @@ fn canceling_dispatch_does_not_cancel_shared_activation_or_deliver_command() {
     }
 
     assert_eq!(observations.state.activations.load(Ordering::Relaxed), 1);
-    assert!(observations.state.delivered.lock().is_empty());
+    assert!(observations.state.delivered.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -228,7 +226,7 @@ fn repeated_passivation_reports_already_passivating() {
     let actor_runtime = TestRuntime::new();
     let observations = actor_runtime.clone();
     let fence_gate = ActivationGate::closed();
-    *actor_runtime.state.fence_gate.lock() = Some(Arc::clone(&fence_gate));
+    *actor_runtime.state.fence_gate.lock().unwrap() = Some(Arc::clone(&fence_gate));
     let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime).unwrap();
     let entity_id = EntityId::new(7);
     block_on(entities.dispatch(entity_id, 1)).unwrap();

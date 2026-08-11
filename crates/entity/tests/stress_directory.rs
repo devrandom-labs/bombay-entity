@@ -1,8 +1,6 @@
 use std::num::NonZeroUsize;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use parking_lot::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bombay_entity::{
@@ -17,7 +15,7 @@ struct Bootstrap(Mutex<Option<ActivationId>>);
 
 impl EffectInterpreter<usize, usize, usize, usize> for Bootstrap {
     fn start_activation(&self, _: EntityId<usize>, activation_id: ActivationId) {
-        *self.0.lock() = Some(activation_id);
+        *self.0.lock().unwrap() = Some(activation_id);
     }
 
     fn deliver(&self, _: EntityId<usize>, _: ActivationId, _: DispatchId, _: usize, _: usize) {}
@@ -67,7 +65,7 @@ fn hot_entity_resolves_every_concurrent_dispatch() {
     let entity_id = EntityId::new(1);
     let bootstrap = Bootstrap::default();
     directory.interpret(directory.dispatch(entity_id, 0).unwrap().output, &bootstrap);
-    let activation_id = bootstrap.0.lock().unwrap();
+    let activation_id = bootstrap.0.lock().unwrap().unwrap();
     directory.interpret(
         directory.activation_succeeded(&entity_id, activation_id, 1, 1),
         &bootstrap,
