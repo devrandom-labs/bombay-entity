@@ -24,7 +24,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 - H05 passivate bool: KEPT (E05) — Passivation enum, migration in commit. `EntityRuntime::passivate -> bool` (runtime.rs:244) is ambiguous AND racy
   (stale-read true, directory.rs:375). Replace with enum outcome (Begun / NoActivation /
   Ignored-stale). Public seam closure — document migration. Add race characterization test FIRST.
-- H06 DispatchWait.completed bool (runtime.rs:266): derive from completion state; remove driftable
+- H06 DispatchWait: KEPT (E06) — CompletionState sum type..completed bool (runtime.rs:266): derive from completion state; remove driftable
   flag. Falsifier: double-completion or missed wake in loom/test.
 - H07 driver bool fields: SerializedExecution{running,poisoned} → single enum (removes illegal
   running+poisoned); armed/dispatching/acquired → guard-token or Option<MutexGuard> encoding.

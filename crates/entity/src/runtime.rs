@@ -1,6 +1,6 @@
 //! Concise asynchronous API over the local entity directory.
 
-use std::future::Future;
+use std::mem;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, Poll, Waker};
@@ -112,31 +112,59 @@ struct PendingCommand<C> {
 
 struct Completion<C>(Mutex<CompletionState<C>>);
 
-struct CompletionState<C> {
-    result: Option<Result<(), DispatchFailure<C>>>,
-    waker: Option<Waker>,
+enum CompletionState<C> {
+    Awaiting { waker: Option<Waker> },
+    Ready(Result<(), DispatchFailure<C>>),
+    Consumed,
 }
 
 impl<C> Completion<C> {
     fn new() -> Self {
-        Self(Mutex::new(CompletionState {
-            result: None,
-            waker: None,
-        }))
+        Self(Mutex::new(CompletionState::Awaiting { waker: None }))
     }
 
     fn complete(&self, result: Result<(), DispatchFailure<C>>) {
         let waker = {
             let mut state = self.0.lock().expect("completion lock poisoned");
-            if state.result.is_some() {
-                return;
+            match &mut *state {
+                CompletionState::Awaiting { .. } => {
+                    match mem::replace(&mut *state, CompletionState::Ready(result)) {
+                        CompletionState::Awaiting { waker } => waker,
+                        _ => None,
+                    }
+                }
+                CompletionState::Ready(_) | CompletionState::Consumed => return,
             }
-            state.result = Some(result);
-            state.waker.take()
         };
         if let Some(waker) = waker {
             waker.wake();
         }
+    }
+
+    /// Take the delivered result, or register the waker while still awaiting.
+    fn poll_take(&self, waker: &Waker) -> Option<Result<(), DispatchFailure<C>>> {
+        let mut state = self.0.lock().expect("completion lock poisoned");
+        match &mut *state {
+            CompletionState::Ready(_) => {
+                match mem::replace(&mut *state, CompletionState::Consumed) {
+                    CompletionState::Ready(result) => Some(result),
+                    _ => None,
+                }
+            }
+            CompletionState::Awaiting { waker: stored } => {
+                *stored = Some(waker.clone());
+                None
+            }
+            CompletionState::Consumed => None,
+        }
+    }
+
+    /// Whether a delivered result was already consumed by the waiter.
+    fn is_consumed(&self) -> bool {
+        matches!(
+            *self.0.lock().expect("completion lock poisoned"),
+            CompletionState::Consumed
+        )
     }
 }
 
@@ -246,7 +274,6 @@ where
             activation_id,
             dispatch_id,
             runtime: Arc::downgrade(&self.inner),
-            completed: false,
         }
         .await
     }
@@ -291,7 +318,6 @@ where
     activation_id: Option<ActivationId>,
     dispatch_id: DispatchId,
     runtime: Weak<Runtime<I, C, R>>,
-    completed: bool,
 }
 
 impl<I, C, R> Unpin for DispatchWait<I, C, R>
@@ -310,21 +336,10 @@ where
 {
     type Output = Result<(), DispatchFailure<C>>;
 
-    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        let result = {
-            let mut state = self.completion.0.lock().expect("completion lock poisoned");
-            if let Some(result) = state.result.take() {
-                Some(result)
-            } else {
-                state.waker = Some(context.waker().clone());
-                None
-            }
-        };
-        if let Some(result) = result {
-            self.completed = true;
-            Poll::Ready(result)
-        } else {
-            Poll::Pending
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.completion.poll_take(context.waker()) {
+            Some(result) => Poll::Ready(result),
+            None => Poll::Pending,
         }
     }
 }
@@ -336,7 +351,7 @@ where
     R: LocalEntityRuntime<I, C>,
 {
     fn drop(&mut self) {
-        if self.completed {
+        if self.completion.is_consumed() {
             return;
         }
         if let Some(runtime) = self.runtime.upgrade()
