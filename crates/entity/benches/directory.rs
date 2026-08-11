@@ -121,6 +121,21 @@ fn independent_keys() -> Duration {
     started.elapsed()
 }
 
+/// Stale lifecycle callbacks addressed to an entity with no directory entry,
+/// the steady state after passivation churn.
+fn stale_absent_callbacks() -> Duration {
+    let directory = Directory::new(config(64)).unwrap();
+    let discard = Discard::new();
+    let entity_id = EntityId::new(1);
+    let started = Instant::now();
+    for sequence in 1..=ITERATIONS {
+        let activation_id = ActivationId::new(NonZeroU64::new(sequence).unwrap());
+        let output = directory.terminated(&entity_id, activation_id);
+        directory.interpret(output, &discard);
+    }
+    started.elapsed()
+}
+
 fn contended_active_key() -> Duration {
     let directory = Arc::new(Directory::new(config(THREADS)).unwrap());
     let discard = Discard::new();
@@ -182,7 +197,14 @@ fn main() {
     let (active_min, active_med) = repeat(active_hot_key);
     let (independent_min, independent_med) = repeat(independent_keys);
     let (contended_min, contended_med) = repeat(contended_active_key);
-    black_box((activating_min, active_min, independent_min, contended_min));
+    let (stale_min, stale_med) = repeat(stale_absent_callbacks);
+    black_box((
+        activating_min,
+        active_min,
+        independent_min,
+        contended_min,
+        stale_min,
+    ));
     println!("iterations={ITERATIONS}");
     println!("repetitions={REPETITIONS}");
     println!("activating_hot_key_min={activating_min:?}");
@@ -196,4 +218,6 @@ fn main() {
     println!("contended_iterations_per_thread={CONTENDED_ITERATIONS}");
     println!("contended_active_key_min={contended_min:?}");
     println!("contended_active_key_median={contended_med:?}");
+    println!("stale_absent_callbacks_min={stale_min:?}");
+    println!("stale_absent_callbacks_median={stale_med:?}");
 }
