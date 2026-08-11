@@ -220,9 +220,7 @@ where
                 }
             })?;
         let dispatch_id = output.dispatch_id.expect("dispatch has an identity");
-        let activation_id = output
-            .activation_id
-            .expect("dispatch represents an activation");
+        let activation_id = output.activation_id;
         self.inner.directory.interpret(output, &self.inner);
         DispatchWait {
             completion,
@@ -262,7 +260,7 @@ where
 {
     completion: Arc<Completion<C>>,
     entity_id: EntityId<I>,
-    activation_id: ActivationId,
+    activation_id: Option<ActivationId>,
     dispatch_id: DispatchId,
     runtime: Weak<Runtime<I, C, R>>,
     completed: bool,
@@ -313,12 +311,13 @@ where
         if self.completed {
             return;
         }
-        if let Some(runtime) = self.runtime.upgrade() {
-            let output = runtime.directory.cancel_waiter(
-                &self.entity_id,
-                self.activation_id,
-                self.dispatch_id,
-            );
+        if let Some(runtime) = self.runtime.upgrade()
+            && let Some(activation_id) = self.activation_id
+        {
+            let output =
+                runtime
+                    .directory
+                    .cancel_waiter(&self.entity_id, activation_id, self.dispatch_id);
             runtime.directory.interpret(output, &runtime);
         }
     }
