@@ -1,0 +1,12 @@
+{
+  "name": "bombay-tighten-loop",
+  "version": "0.1.0",
+  "description": "Research-driven OMP convergence loop for Bombay Entity.",
+  "type": "module",
+  "private": true,
+  "keywords": ["pi-package", "omp", "rust", "research", "refactoring"],
+  "pi": {
+    "skills": ["skills"],
+    "prompts": ["prompts"]
+  }
+}

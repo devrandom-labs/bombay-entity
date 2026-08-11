@@ -1,0 +1,18 @@
+{
+  "name": "bombay-tighten-loop",
+  "version": "0.1.0",
+  "description": "Research-driven convergence loop for tightening the finalized Bombay Entity workspace without semantic or performance regressions.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Bombay Tighten Loop",
+    "shortDescription": "Research and tighten finalized Rust designs.",
+    "longDescription": "Runs evidence-driven research, dependency, correctness, performance, and simplification passes while preserving finalized semantics and crate boundaries.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Use $bombay-tighten-loop to research and iteratively tighten this workspace to a verified fixed point."
+  }
+}
