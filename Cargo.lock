@@ -59,6 +59,7 @@ dependencies = [
  "bombay-behavior",
  "bombay-driver",
  "bombay-transition",
+ "loom",
 ]
 
 [[package]]
