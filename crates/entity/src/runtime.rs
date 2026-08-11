@@ -252,7 +252,7 @@ where
             command,
             completion: Arc::clone(&completion),
         };
-        let output = self
+        let dispatched = self
             .inner
             .directory
             .dispatch(entity_id.clone(), pending)
@@ -265,9 +265,11 @@ where
                     DispatchFailure::DispatchIdsExhausted(pending.command)
                 }
             })?;
-        let dispatch_id = output.dispatch_id.expect("dispatch has an identity");
-        let activation_id = output.activation_id;
-        self.inner.directory.interpret(output, &self.inner);
+        let dispatch_id = dispatched.dispatch_id;
+        let activation_id = dispatched.output.activation_id;
+        self.inner
+            .directory
+            .interpret(dispatched.output, &self.inner);
         DispatchWait {
             completion,
             entity_id,

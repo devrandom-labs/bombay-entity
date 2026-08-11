@@ -78,13 +78,20 @@ pub trait EffectInterpreter<I, C, E, L> {
 
 /// One installed lifecycle decision awaiting effect interpretation.
 pub struct DirectoryOutput<I, C, E, L> {
-    /// Correlation identity allocated for a dispatched command, when applicable.
-    pub dispatch_id: Option<DispatchId>,
     /// Checked evidence for the installed lifecycle decision.
     pub evidence: TransitionEvidence,
     pub(crate) activation_id: Option<ActivationId>,
     entity_id: EntityId<I>,
     slot: Arc<Slot<C, E, L>>,
+}
+
+/// The installed decision for one dispatched command, with its guaranteed
+/// correlation identity.
+pub struct DispatchOutput<I, C, E, L> {
+    /// Correlation identity allocated for the dispatched command.
+    pub dispatch_id: DispatchId,
+    /// Installed decision awaiting effect interpretation.
+    pub output: DirectoryOutput<I, C, E, L>,
 }
 
 struct Slot<C, E, L> {
@@ -216,7 +223,7 @@ where
         &self,
         entity_id: EntityId<I>,
         command: C,
-    ) -> Result<DirectoryOutput<I, C, E, L>, DirectoryError<C>> {
+    ) -> Result<DispatchOutput<I, C, E, L>, DirectoryError<C>> {
         let mut command = Some(command);
         let dispatch_id = match allocate(&self.next_dispatch) {
             Some(value) => DispatchId(value.get()),
@@ -255,13 +262,10 @@ where
                 command: command.take().expect("command present"),
             })
         });
-        Ok(directory_output(
-            entity_id,
-            Some(dispatch_id),
-            installed.evidence,
-            installed.activation_id,
-            slot,
-        ))
+        Ok(DispatchOutput {
+            dispatch_id,
+            output: directory_output(entity_id, installed.evidence, installed.activation_id, slot),
+        })
     }
 
     /// Submit successful exact-incarnation activation to the represented slot.
@@ -412,7 +416,6 @@ where
         };
         directory_output(
             entity_id.clone(),
-            None,
             installed.evidence,
             installed.activation_id,
             slot,
@@ -523,13 +526,11 @@ fn allocate(sequence: &AtomicU64) -> Option<NonZeroU64> {
 
 fn directory_output<I, C, E, L>(
     entity_id: EntityId<I>,
-    dispatch_id: Option<DispatchId>,
     evidence: TransitionEvidence,
     activation_id: Option<ActivationId>,
     slot: Arc<Slot<C, E, L>>,
 ) -> DirectoryOutput<I, C, E, L> {
     DirectoryOutput {
-        dispatch_id,
         evidence,
         activation_id,
         entity_id,

@@ -30,7 +30,8 @@ mod runtime;
 
 pub use bombay_transition::{Decision, Reducer};
 pub use directory::{
-    DirectoryConfig, DirectoryError, DirectoryOutput, EffectInterpreter, LocalDirectory,
+    DirectoryConfig, DirectoryError, DirectoryOutput, DispatchOutput, EffectInterpreter,
+    LocalDirectory,
 };
 pub use lifecycle::{
     ActivatingSlot, ActivationId, ActivationWaiter, ActiveSlot, DispatchId, DrainFailure,

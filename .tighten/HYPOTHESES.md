@@ -31,7 +31,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   Falsifier: any loom/executor test changes outcome; poison semantics must stay identical.
 
 ## P2 — sentinel/duplication removal
-- H08 DirectoryOutput.dispatch_id Option → split DispatchOutput vs CallbackOutput types; deletes
+- H08 DirectoryOutput: KEPT (E09)..dispatch_id Option → split DispatchOutput vs CallbackOutput types; deletes
   runtime.rs:222 expect. Falsifier: any callback path needs a dispatch id.
 - H09 executor `machine: Option<M>` mid-step sentinel → StepInProgress-style encoding; deletes
   "executor machine missing" expects (driver:219, :305). Check reentrancy semantics first.

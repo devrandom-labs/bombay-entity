@@ -89,6 +89,7 @@ fn concurrent_first_dispatches_share_one_bounded_activation() {
                 directory
                     .dispatch(EntityId::new(7), command as u64)
                     .unwrap()
+                    .output
             })
         })
         .collect();
@@ -125,7 +126,7 @@ fn draining_closes_admission_before_fence_execution() {
     let directory = Directory::new(DirectoryConfig::default()).unwrap();
     let runtime = Recorder::default();
     let entity_id = EntityId::new(9);
-    let claimed = directory.dispatch(entity_id, 1).unwrap();
+    let claimed = directory.dispatch(entity_id, 1).unwrap().output;
     directory.interpret(claimed, &runtime);
     let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
         panic!("activation not started");
@@ -137,7 +138,7 @@ fn draining_closes_admission_before_fence_execution() {
         &runtime,
     );
     directory.interpret(directory.begin_drain(&entity_id, activation_id), &runtime);
-    directory.interpret(directory.dispatch(entity_id, 4).unwrap(), &runtime);
+    directory.interpret(directory.dispatch(entity_id, 4).unwrap().output, &runtime);
 
     let actions = runtime.0.lock().unwrap();
     assert!(matches!(actions[2], Action::Fence(id) if id == activation_id));
@@ -165,7 +166,7 @@ fn exact_termination_removes_the_matching_slot() {
     let directory = Directory::new(DirectoryConfig::default()).unwrap();
     let runtime = Recorder::default();
     let entity_id = EntityId::new(4);
-    directory.interpret(directory.dispatch(entity_id, 1).unwrap(), &runtime);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, &runtime);
     let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
         panic!("activation not started");
     };
@@ -229,8 +230,8 @@ fn reentrant_delivery_resolution_appends_fence_to_current_interpreter() {
     let directory = Arc::new(Directory::new(DirectoryConfig::default()).unwrap());
     let recorder = Recorder::default();
     let entity_id = EntityId::new(8);
-    directory.interpret(directory.dispatch(entity_id, 10).unwrap(), &recorder);
-    directory.interpret(directory.dispatch(entity_id, 11).unwrap(), &recorder);
+    directory.interpret(directory.dispatch(entity_id, 10).unwrap().output, &recorder);
+    directory.interpret(directory.dispatch(entity_id, 11).unwrap().output, &recorder);
     let Action::Start(activation_id) = recorder.0.lock().unwrap()[0] else {
         panic!("activation not started");
     };
@@ -255,7 +256,7 @@ fn forced_retirement_preserves_the_exact_failure_stage() {
     let directory = Directory::new(DirectoryConfig::default()).unwrap();
     let runtime = Recorder::default();
     let entity_id = EntityId::new(12);
-    directory.interpret(directory.dispatch(entity_id, 1).unwrap(), &runtime);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, &runtime);
     let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
         panic!("activation not started");
     };
@@ -289,7 +290,7 @@ fn stale_termination_cannot_remove_the_live_incarnation() {
     let directory = Directory::new(DirectoryConfig::default()).unwrap();
     let runtime = Recorder::default();
     let entity_id = EntityId::new(13);
-    directory.interpret(directory.dispatch(entity_id, 1).unwrap(), &runtime);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, &runtime);
     let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
         panic!("activation not started");
     };
@@ -303,7 +304,7 @@ fn stale_termination_cannot_remove_the_live_incarnation() {
     );
 
     assert_eq!(directory.len(), 1);
-    directory.interpret(directory.dispatch(entity_id, 9).unwrap(), &runtime);
+    directory.interpret(directory.dispatch(entity_id, 9).unwrap().output, &runtime);
     assert!(
         runtime
             .0
