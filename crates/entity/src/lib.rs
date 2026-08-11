@@ -23,6 +23,17 @@
 use core::fmt;
 use core::hash::Hash;
 
+mod lifecycle;
+mod protocol;
+
+pub use bombay_transition::{Decision, Reducer};
+pub use lifecycle::{
+    ActivatingSlot, ActivationId, ActivationWaiter, ActiveSlot, DispatchId, DrainFailure,
+    DrainProgress, DrainStage, DrainingSlot, EntitySlot, Refusal, ReservationCount, RetirementMode,
+    SlotDecision, SlotEffect, SlotEffectBatch, SlotEvent, SlotReducer,
+};
+pub use protocol::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
+
 /// A stable, typed identifier for an entity.
 ///
 /// The identifier names the logical entity rather than any particular actor

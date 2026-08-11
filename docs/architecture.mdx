@@ -155,6 +155,31 @@ incarnation lease.
 
 ## Slot state machine
 
+The reference slot is a functional core. It consumes an owned state and one
+typed fact, then returns an owned next state and an ordered effect batch:
+
+```text
+EntitySlot<C, E, L> × SlotEvent<C, E, L>
+    → SlotDecision<C, E, L>
+    = EntitySlot<C, E, L> × SlotEffectBatch<C, E, L>
+```
+
+State-specific reducers handle `Inactive`, `Activating`, `Active`, `Draining`,
+and `Retiring`; the top-level reducer only dispatches over that product of sum
+types. Policy choices and asynchronous results enter as typed facts. The core
+does not acquire locks, start tasks, read clocks, or invoke endpoints.
+
+`SlotEffectBatch` is an ordered monoid: the empty batch is its identity and
+concatenation preserves effect order. The effectful directory interpreter folds
+that algebra into Actorpass operations, tasks, replies, telemetry, and map
+updates. Rust ownership keeps commands and the affine incarnation lease unique
+through every reduction without requiring `Clone`.
+
+Reservation cardinality is also represented as a sum type—`Drained` or
+`Pending(NonZeroUsize)`—rather than using zero as a hidden control convention.
+This makes the fence transition available only from an explicitly drained
+reservation state.
+
 The external lifecycle is deliberately small:
 
 ```text

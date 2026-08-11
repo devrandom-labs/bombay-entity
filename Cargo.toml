@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/entity"]
+members = ["crates/entity", "crates/transition"]
 
 [workspace.package]
 edition = "2024"
@@ -11,6 +11,8 @@ homepage = "https://github.com/devrandom-labs/bombay-entity"
 
 [workspace.dependencies]
 bombay-entity = { path = "crates/entity" }
+behavior = { package = "bombay-behavior", version = "0.9.1" }
+bombay-transition = { path = "crates/transition" }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
