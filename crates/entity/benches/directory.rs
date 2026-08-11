@@ -161,18 +161,39 @@ fn contended_active_key() -> Duration {
     started.elapsed()
 }
 
+const REPETITIONS: usize = 7;
+
+/// Run a workload repeatedly, returning (minimum, median) elapsed time.
+///
+/// The minimum is the least-noise estimator for cross-change comparison; the
+/// median exposes typical behavior. A wide min/median spread means machine
+/// noise dominates and small deltas must not be trusted.
+fn repeat(mut workload: impl FnMut() -> Duration) -> (Duration, Duration) {
+    let mut samples = [Duration::ZERO; REPETITIONS];
+    for sample in &mut samples {
+        *sample = workload();
+    }
+    samples.sort_unstable();
+    (samples[0], samples[REPETITIONS / 2])
+}
+
 fn main() {
-    let activating = activating_hot_key();
-    let active = active_hot_key();
-    let independent = independent_keys();
-    let contended = contended_active_key();
-    black_box((&activating, &active, &independent, &contended));
+    let (activating_min, activating_med) = repeat(activating_hot_key);
+    let (active_min, active_med) = repeat(active_hot_key);
+    let (independent_min, independent_med) = repeat(independent_keys);
+    let (contended_min, contended_med) = repeat(contended_active_key);
+    black_box((activating_min, active_min, independent_min, contended_min));
     println!("iterations={ITERATIONS}");
-    println!("activating_hot_key={activating:?}");
-    println!("active_hot_key={active:?}");
+    println!("repetitions={REPETITIONS}");
+    println!("activating_hot_key_min={activating_min:?}");
+    println!("activating_hot_key_median={activating_med:?}");
+    println!("active_hot_key_min={active_min:?}");
+    println!("active_hot_key_median={active_med:?}");
     println!("independent_iterations={INDEPENDENT_ITERATIONS}");
-    println!("independent_keys={independent:?}");
+    println!("independent_keys_min={independent_min:?}");
+    println!("independent_keys_median={independent_med:?}");
     println!("threads={THREADS}");
     println!("contended_iterations_per_thread={CONTENDED_ITERATIONS}");
-    println!("contended_active_key={contended:?}");
+    println!("contended_active_key_min={contended_min:?}");
+    println!("contended_active_key_median={contended_med:?}");
 }

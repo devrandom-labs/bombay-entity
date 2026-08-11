@@ -69,7 +69,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 - H23 graceful retirement blocked pre-ack negative test (invariant 6).
 - H24 Refusal::Busy bounded admission test; FenceFailure variant tests.
 - H25 executor poison-path loom models.
-- H26 bench methodology: benches are single-run raw timing; add repetition/noise bounds before
+- H26 bench methodology: KEPT (E12).: benches are single-run raw timing; add repetition/noise bounds before
   accepting ANY perf hypothesis (prerequisite for P3/P4).
 
 ## P6 — hygiene

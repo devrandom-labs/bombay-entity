@@ -13,6 +13,8 @@ fn activation(value: u64) -> ActivationId {
     ActivationId::new(NonZeroU64::new(value).unwrap())
 }
 
+const REPETITIONS: usize = 7;
+
 fn measure(mut operation: impl FnMut()) -> Duration {
     let started = Instant::now();
     for _ in 0..ITERATIONS {
@@ -21,8 +23,19 @@ fn measure(mut operation: impl FnMut()) -> Duration {
     started.elapsed()
 }
 
+/// Measure repeatedly, returning (minimum, median). See the directory bench
+/// for the rationale.
+fn repeat(mut operation: impl FnMut()) -> (Duration, Duration) {
+    let mut samples = [Duration::ZERO; REPETITIONS];
+    for sample in &mut samples {
+        *sample = measure(&mut operation);
+    }
+    samples.sort_unstable();
+    (samples[0], samples[REPETITIONS / 2])
+}
+
 fn main() {
-    let ignored = measure(|| {
+    let (ignored_min, ignored_med) = repeat(|| {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (output, machine) = machine.step(SlotEvent::Terminated {
             activation_id: activation(2),
@@ -30,7 +43,7 @@ fn main() {
         black_box((output.evidence, machine));
     });
 
-    let activation = measure(|| {
+    let (activation_min, activation_med) = repeat(|| {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (output, machine) = machine.step(SlotEvent::ClaimActivation {
             activation_id: activation(1),
@@ -46,6 +59,9 @@ fn main() {
     });
 
     println!("iterations={ITERATIONS}");
-    println!("ignored_step={ignored:?}");
-    println!("claim_activation_step={activation:?}");
+    println!("repetitions={REPETITIONS}");
+    println!("ignored_step_min={ignored_min:?}");
+    println!("ignored_step_median={ignored_med:?}");
+    println!("claim_activation_step_min={activation_min:?}");
+    println!("claim_activation_step_median={activation_med:?}");
 }
