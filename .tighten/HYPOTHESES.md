@@ -21,7 +21,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   to Acquire/Release if proof fails. Falsifier: proof requires happens-before the code lacks.
 
 ## P1 — type-state / boolean elimination (contract: no boolean state/results)
-- H05 passivate bool: `EntityRuntime::passivate -> bool` (runtime.rs:244) is ambiguous AND racy
+- H05 passivate bool: KEPT (E05) — Passivation enum, migration in commit. `EntityRuntime::passivate -> bool` (runtime.rs:244) is ambiguous AND racy
   (stale-read true, directory.rs:375). Replace with enum outcome (Begun / NoActivation /
   Ignored-stale). Public seam closure — document migration. Add race characterization test FIRST.
 - H06 DispatchWait.completed bool (runtime.rs:266): derive from completion state; remove driftable
@@ -84,3 +84,8 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 - Miri: unavailable on pinned stable 1.96 toolchain. Not actionable.
 - EntityBehavior/forward_optional_event! folding: blocked on behavior-crate capabilities
   (external dep) — research only, no change in this workspace.
+- H29 parking_lot: user rule prefers parking_lot::Mutex where lock results are immediately
+  unwrapped. Production driver relies on std poison semantics (SerializedExecutor recovery) and
+  entity escalates poison deliberately — do NOT migrate those. Candidate scope: test harnesses
+  only, as one wholesale convention migration (never mixed). Research loom interaction first:
+  loom tests require loom::sync types under cfg(loom).

@@ -7,7 +7,7 @@ use std::task::{Context, Poll, Waker};
 
 use crate::{
     ActivationId, DirectoryConfig, DirectoryError, DispatchId, DrainFailure, DrainStage,
-    EffectInterpreter, EntityId, LifecycleEdge, LocalDirectory, Refusal, RetirementMode,
+    EffectInterpreter, EntityId, LifecyclePhase, LocalDirectory, Refusal, RetirementMode,
     TransitionEvidence,
 };
 
@@ -28,6 +28,19 @@ pub enum FenceFailure {
     /// The fence was enqueued but not acknowledged.
     #[error("fence was enqueued but not acknowledged")]
     Acknowledgement,
+}
+
+/// Outcome of one [`EntityRuntime::passivate`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Passivation {
+    /// Admission was closed at this call's lifecycle linearization point.
+    Begun,
+    /// No active incarnation exists to passivate.
+    NotActive,
+    /// A passivation was already in progress for the exact incarnation.
+    AlreadyPassivating,
+    /// The observed incarnation was superseded before the drain linearized.
+    Superseded,
 }
 
 /// Runtime port implemented once by an actor runtime integration.
@@ -246,14 +259,24 @@ where
     /// # Panics
     ///
     /// Panics if directory synchronization was poisoned.
-    pub fn passivate(&self, entity_id: &EntityId<I>) -> bool {
+    pub fn passivate(&self, entity_id: &EntityId<I>) -> Passivation {
         let Some(activation_id) = self.inner.directory.current_activation(entity_id) else {
-            return false;
+            return Passivation::NotActive;
         };
         let output = self.inner.directory.begin_drain(entity_id, activation_id);
-        let started = output.evidence == TransitionEvidence::Traversed(LifecycleEdge::BeginDrain);
+        let passivation = match output.evidence {
+            TransitionEvidence::Traversed(_) => Passivation::Begun,
+            TransitionEvidence::SelfLoop { phase, .. }
+            | TransitionEvidence::Ignored { phase, .. } => match phase {
+                LifecyclePhase::Active => Passivation::Superseded,
+                LifecyclePhase::Draining | LifecyclePhase::Retiring => {
+                    Passivation::AlreadyPassivating
+                }
+                LifecyclePhase::Inactive | LifecyclePhase::Activating => Passivation::NotActive,
+            },
+        };
         self.inner.directory.interpret(output, &self.inner);
-        started
+        passivation
     }
 }
 

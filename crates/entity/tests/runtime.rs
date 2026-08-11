@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use bombay_entity::{
     Activated, ActivationId, DirectoryConfig, DispatchFailure, EntityId, EntityRuntime,
-    FenceFailure, LocalEntityRuntime, Refusal, RetirementMode,
+    FenceFailure, LocalEntityRuntime, Passivation, Refusal, RetirementMode,
 };
 
 struct ThreadWake(thread::Thread);
@@ -41,6 +41,7 @@ struct TestRuntimeState {
     fail_delivery: AtomicBool,
     delivered: Mutex<Vec<u64>>,
     activation_gate: Mutex<Option<Arc<ActivationGate>>>,
+    fence_gate: Mutex<Option<Arc<ActivationGate>>>,
     fences: AtomicUsize,
     retirements: AtomicUsize,
 }
@@ -53,6 +54,7 @@ impl TestRuntime {
                 fail_delivery: AtomicBool::new(false),
                 delivered: Mutex::new(Vec::new()),
                 activation_gate: Mutex::new(None),
+                fence_gate: Mutex::new(None),
                 fences: AtomicUsize::new(0),
                 retirements: AtomicUsize::new(0),
             }),
@@ -95,6 +97,10 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
     }
 
     async fn fence(&self, _: Self::Endpoint) -> Result<(), FenceFailure> {
+        let gate = self.state.fence_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.wait().await;
+        }
         self.state.fences.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -206,6 +212,43 @@ fn canceling_dispatch_does_not_cancel_shared_activation_or_deliver_command() {
 }
 
 #[test]
+fn passivation_reports_not_active_for_unknown_entity() {
+    let entities = EntityRuntime::new(DirectoryConfig::default(), TestRuntime::new()).unwrap();
+
+    assert_eq!(
+        entities.passivate(&EntityId::new(99)),
+        Passivation::NotActive
+    );
+}
+
+#[test]
+fn repeated_passivation_reports_already_passivating() {
+    let actor_runtime = TestRuntime::new();
+    let observations = actor_runtime.clone();
+    let fence_gate = ActivationGate::closed();
+    *actor_runtime.state.fence_gate.lock().unwrap() = Some(Arc::clone(&fence_gate));
+    let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime).unwrap();
+    let entity_id = EntityId::new(7);
+    block_on(entities.dispatch(entity_id, 1)).unwrap();
+
+    assert_eq!(entities.passivate(&entity_id), Passivation::Begun);
+    assert_eq!(
+        entities.passivate(&entity_id),
+        Passivation::AlreadyPassivating
+    );
+
+    fence_gate.open();
+    for _ in 0..100 {
+        if observations.state.retirements.load(Ordering::Acquire) == 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(observations.state.fences.load(Ordering::Relaxed), 1);
+    assert_eq!(observations.state.retirements.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn passivation_fences_and_retires_the_exact_incarnation() {
     let actor_runtime = TestRuntime::new();
     let observations = actor_runtime.clone();
@@ -213,7 +256,7 @@ fn passivation_fences_and_retires_the_exact_incarnation() {
     let entity_id = EntityId::new(6);
     block_on(entities.dispatch(entity_id, 1)).unwrap();
 
-    assert!(entities.passivate(&entity_id));
+    assert_eq!(entities.passivate(&entity_id), Passivation::Begun);
     for _ in 0..100 {
         if observations.state.retirements.load(Ordering::Acquire) == 1 {
             break;

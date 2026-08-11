@@ -41,7 +41,9 @@ pub use lifecycle::{
     lifecycle_model, validate_lifecycle_topology,
 };
 pub use protocol::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
-pub use runtime::{Activated, DispatchFailure, EntityRuntime, FenceFailure, LocalEntityRuntime};
+pub use runtime::{
+    Activated, DispatchFailure, EntityRuntime, FenceFailure, LocalEntityRuntime, Passivation,
+};
 
 /// A stable, typed identifier for an entity.
 ///
