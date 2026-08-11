@@ -53,6 +53,7 @@ dependencies = [
  "bombay-machine-executor",
  "bombay-transition",
  "loom",
+ "thiserror",
 ]
 
 [[package]]
@@ -61,11 +62,15 @@ version = "0.1.0"
 dependencies = [
  "bombay-transition",
  "loom",
+ "thiserror",
 ]
 
 [[package]]
 name = "bombay-transition"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "cc"

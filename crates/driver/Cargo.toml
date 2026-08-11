@@ -12,6 +12,7 @@ categories = ["concurrency"]
 
 [dependencies]
 bombay-transition.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 loom = "0.7.2"

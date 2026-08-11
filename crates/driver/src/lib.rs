@@ -98,7 +98,8 @@ fn complete(completion: &TurnCompletion, outcome: TurnOutcome) {
 }
 
 /// Rejection of an input after a serialized executor was poisoned.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("executor was poisoned by a previous panic")]
 pub struct PoisonedInput<I>(
     /// Input whose ownership was not accepted.
     pub I,
@@ -434,6 +435,14 @@ mod tests {
         Base::new(0, TOPOLOGY.validated().unwrap(), |state, input| {
             (Output(input), state + input)
         })
+    }
+
+    #[test]
+    fn poisoned_input_reports_the_rejection() {
+        assert_eq!(
+            super::PoisonedInput(7_u8).to_string(),
+            "executor was poisoned by a previous panic"
+        );
     }
 
     #[test]

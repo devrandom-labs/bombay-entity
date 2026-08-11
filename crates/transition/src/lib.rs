@@ -26,6 +26,9 @@
 #![no_std]
 #![deny(missing_docs)]
 
+#[cfg(test)]
+extern crate alloc;
+
 mod machine;
 
 pub use machine::{

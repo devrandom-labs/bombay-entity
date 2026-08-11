@@ -32,13 +32,16 @@ impl Default for DirectoryConfig {
 }
 
 /// Failure before a command can be submitted to a lifecycle machine.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum DirectoryError<C> {
     /// The shard count was not a power of two.
+    #[error("shard count was not a power of two")]
     InvalidShardCount,
     /// The monotonically increasing activation namespace is exhausted.
+    #[error("activation identity namespace is exhausted")]
     ActivationIdsExhausted(C),
     /// The monotonically increasing dispatch namespace is exhausted.
+    #[error("dispatch identity namespace is exhausted")]
     DispatchIdsExhausted(C),
 }
 

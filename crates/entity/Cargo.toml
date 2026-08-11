@@ -16,6 +16,7 @@ categories = ["concurrency"]
 behavior.workspace = true
 bombay-machine-executor.workspace = true
 bombay-transition.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 loom = "0.7.2"

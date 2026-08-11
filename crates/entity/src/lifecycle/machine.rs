@@ -257,13 +257,16 @@ pub const fn lifecycle_model() -> LifecycleModel {
 }
 
 /// Lifecycle-specific structural validation failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LifecycleTopologyError {
     /// Generic topology validation failed.
-    Structure(TopologyError),
+    #[error("generic topology validation failed")]
+    Structure(#[from] TopologyError),
     /// One required lifecycle edge is absent.
+    #[error("required lifecycle edge is absent")]
     Missing(LifecycleEdge),
     /// Retirement could reopen admission.
+    #[error("retirement could reopen admission")]
     RetiringToActive,
 }
 

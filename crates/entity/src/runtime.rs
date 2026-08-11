@@ -20,11 +20,13 @@ pub struct Activated<E, L> {
 }
 
 /// Stage at which an ordered fence operation failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FenceFailure {
     /// The fence was not enqueued.
+    #[error("fence was not enqueued")]
     Enqueue,
     /// The fence was enqueued but not acknowledged.
+    #[error("fence was enqueued but not acknowledged")]
     Acknowledgement,
 }
 
@@ -72,18 +74,21 @@ pub trait LocalEntityRuntime<I, C>: Send + Sync + 'static {
 }
 
 /// Failure from [`EntityRuntime::dispatch`] with command ownership preserved.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum DispatchFailure<C> {
     /// Lifecycle admission or delivery refused the command.
+    #[error("lifecycle admission or delivery refused the command")]
     Refused {
         /// Original command.
         command: C,
         /// Exact refusal classification.
         reason: Refusal,
     },
-    /// The non-reusable activation identity namespace was exhausted.
+    /// The non-reusable activation identity namespace is exhausted.
+    #[error("activation identity namespace is exhausted")]
     ActivationIdsExhausted(C),
-    /// The non-reusable dispatch identity namespace was exhausted.
+    /// The non-reusable dispatch identity namespace is exhausted.
+    #[error("dispatch identity namespace is exhausted")]
     DispatchIdsExhausted(C),
 }
 

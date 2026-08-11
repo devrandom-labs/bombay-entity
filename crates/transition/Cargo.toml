@@ -10,5 +10,8 @@ description = "A transport-free kernel for deterministic state transitions."
 keywords = ["algebra", "reducer", "state-machine"]
 categories = ["no-std"]
 
+[dependencies]
+thiserror.workspace = true
+
 [lints]
 workspace = true

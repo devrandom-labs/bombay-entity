@@ -4,7 +4,7 @@ Each experiment: fill in Threatened invariant / Workload / Change / Falsifier / 
 Rollback boundary BEFORE touching production code. One causal variable per experiment.
 
 ## P0 — contract/rule violations (safe, evidence already in hand)
-- H01 errors: add thiserror `Error`+Display to DirectoryError, DispatchFailure, FenceFailure,
+- H01 errors: KEPT (E01). add thiserror `Error`+Display to DirectoryError, DispatchFailure, FenceFailure,
   LifecycleTopologyError (entity), TopologyError (transition, verify no_std support in
   thiserror 2.x), PoisonedInput (driver). Falsifier: any impl changes a public signature beyond
   adding trait impls, or breaks no_std build. Measure: gate green; check.sh score unchanged or better.
