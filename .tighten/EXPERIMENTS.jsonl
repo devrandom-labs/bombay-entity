@@ -26,3 +26,4 @@
 {"id":"E12","hypothesis":"H26","status":"kept","result":"7 repetitions, min+median reported; min/median spread <=5% on unchanged code; deltas >5% now decision-grade","finished":"2026-08-11"}
 {"id":"E13","hypothesis":"H27","status":"kept","result":"workspace.package.version + crane metadata name; crate versions unified via workspace; 0 crane warnings; gate green","finished":"2026-08-11"}
 {"id":"E14","hypothesis":"H28","status":"kept","result":"let annotation + turbofish replaced by single closure-param annotation (inference cannot cross map_err closure); driver duplicate where-clause removed; 48/48; gate green; SCORE 994932","finished":"2026-08-11"}
+{"id":"E15","hypothesis":"H15","status":"kept","result":"notify_one justified by wait(self) consuming receipt; 5/5 std + 2/2 loom; gate green","finished":"2026-08-11"}

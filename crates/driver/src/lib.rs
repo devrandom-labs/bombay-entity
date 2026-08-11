@@ -94,7 +94,8 @@ fn complete(completion: &TurnCompletion, outcome: TurnOutcome) {
         .outcome
         .lock()
         .expect("turn receipt lock poisoned") = Some(outcome);
-    completion.ready.notify_all();
+    // wait(self) consumes the receipt, so at most one waiter exists.
+    completion.ready.notify_one();
 }
 
 /// Rejection of an input after a serialized executor was poisoned.

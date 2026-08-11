@@ -47,7 +47,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   parity fails. Note contract: dependency must reduce total burden, not just move lines.
 - H14 runtime Completion → oneshot channel (tokio already in tree). Verify wake semantics +
   cancel-on-drop parity with runtime.rs tests.
-- H15 driver TurnCompletion notify_all → notify_one (unique waiter per receipt). Trivial, loom-gated.
+- H15 driver TurnCompletion: KEPT (E15). notify_all → notify_one (unique waiter per receipt). Trivial, loom-gated.
 - H16 dashmap vs sharded std Mutex<HashMap>: contended bench (190ms baseline) is the decider.
   High bar: dashmap semantic fit (no remove-if with slot identity check? we need
   compare-and-remove on (Arc ptr, ActivationId)) — verify entry API supports it atomically.
