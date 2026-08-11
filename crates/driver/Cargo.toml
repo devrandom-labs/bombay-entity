@@ -1,0 +1,17 @@
+[package]
+name = "bombay-driver"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Ordered concurrent execution for composable representable machines."
+keywords = ["concurrency", "interpreter", "state-machine"]
+categories = ["concurrency"]
+
+[dependencies]
+bombay-transition.workspace = true
+
+[lints]
+workspace = true

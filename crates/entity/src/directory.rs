@@ -1,13 +1,12 @@
 //! Concurrent storage for local entity lifecycle machines.
 
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::hash::{BuildHasher, Hash, RandomState};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bombay_transition::Machine;
+use bombay_driver::Driver;
 
 use crate::{
     ActivationId, DispatchId, DrainFailure, EntityId, LifecycleMachine, LifecycleOutput, Refusal,
@@ -85,69 +84,34 @@ pub struct DirectoryOutput<I, C, E, L> {
 }
 
 struct Slot<C, E, L> {
-    state: Mutex<SlotState<C, E, L>>,
-}
-
-struct SlotState<C, E, L> {
-    machine: Option<LifecycleMachine<C, E, L>>,
-    effects: VecDeque<SlotEffect<C, E, L>>,
-    interpreting: bool,
-    removable_activation: Option<ActivationId>,
+    lifecycle: Driver<LifecycleMachine<C, E, L>, SlotEvent<C, E, L>>,
+    removable_activation: Mutex<Option<ActivationId>>,
 }
 
 impl<C, E: Clone, L> Slot<C, E, L> {
-    fn new(machine: LifecycleMachine<C, E, L>, output: LifecycleOutput<C, E, L>) -> Self {
+    fn new() -> Self {
         Self {
-            state: Mutex::new(SlotState {
-                machine: Some(machine),
-                effects: output.effects.into_vec().into(),
-                interpreting: false,
-                removable_activation: None,
-            }),
+            lifecycle: Driver::new(lifecycle_machine()),
+            removable_activation: Mutex::new(None),
         }
     }
 
     fn submit(&self, event: SlotEvent<C, E, L>) -> TransitionEvidence {
-        let mut state = self.state.lock().expect("slot lock poisoned");
-        let machine = state.machine.take().expect("slot machine missing");
-        let (output, successor) = machine.step(event);
-        state.machine = Some(successor);
-        state.effects.extend(output.effects.into_vec());
-        output.evidence
-    }
-
-    fn begin_interpretation(&self) -> bool {
-        let mut state = self.state.lock().expect("slot lock poisoned");
-        if state.interpreting {
-            false
-        } else {
-            state.interpreting = true;
-            true
-        }
-    }
-
-    fn next_effect(&self) -> Option<SlotEffect<C, E, L>> {
-        let mut state = self.state.lock().expect("slot lock poisoned");
-        if let Some(effect) = state.effects.pop_front() {
-            Some(effect)
-        } else {
-            state.interpreting = false;
-            None
-        }
+        self.lifecycle.advance(event, |output| output.evidence)
     }
 
     fn mark_removable(&self, activation_id: ActivationId) {
-        self.state
+        *self
+            .removable_activation
             .lock()
-            .expect("slot lock poisoned")
-            .removable_activation = Some(activation_id);
+            .expect("slot lock poisoned") = Some(activation_id);
     }
 
     fn removable_as(&self, activation_id: ActivationId) -> bool {
-        self.state
+        *self
+            .removable_activation
             .lock()
             .expect("slot lock poisoned")
-            .removable_activation
             == Some(activation_id)
     }
 }
@@ -249,14 +213,13 @@ where
                     ));
                 };
                 let activation_id = ActivationId::new(sequence);
-                let machine = lifecycle_machine().step(SlotEvent::ClaimActivation {
+                let slot = Arc::new(Slot::new());
+                let evidence = slot.submit(SlotEvent::ClaimActivation {
                     activation_id,
                     dispatch_id,
                     command: command.take().expect("command present"),
                     waiter_limit: self.waiter_limit,
                 });
-                let evidence = machine.0.evidence;
-                let slot = Arc::new(Slot::new(machine.1, machine.0));
                 entries.insert(entity_id.clone(), Arc::clone(&slot));
                 (slot, Some(evidence))
             }
@@ -408,9 +371,9 @@ where
             let evidence = slot.submit(event);
             (slot, evidence)
         } else {
-            let (output, machine) = lifecycle_machine().step(event);
-            let evidence = output.evidence;
-            (Arc::new(Slot::new(machine, output)), evidence)
+            let slot = Arc::new(Slot::new());
+            let evidence = slot.submit(event);
+            (slot, evidence)
         };
         directory_output(entity_id.clone(), None, evidence, slot)
     }
@@ -427,46 +390,45 @@ where
         let DirectoryOutput {
             entity_id, slot, ..
         } = output;
-        if !slot.begin_interpretation() {
-            return;
-        }
-        while let Some(effect) = slot.next_effect() {
-            match effect {
-                SlotEffect::StartActivation { activation_id } => {
-                    runtime.start_activation(entity_id.clone(), activation_id);
-                }
-                SlotEffect::Deliver {
-                    activation_id,
-                    dispatch_id,
-                    endpoint,
-                    command,
-                } => runtime.deliver(
-                    entity_id.clone(),
-                    activation_id,
-                    dispatch_id,
-                    endpoint,
-                    command,
-                ),
-                SlotEffect::Reject {
-                    dispatch_id,
-                    command,
-                    reason,
-                } => runtime.reject(dispatch_id, command, reason),
-                SlotEffect::EnqueueFence {
-                    activation_id,
-                    endpoint,
-                } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
-                SlotEffect::Retire {
-                    activation_id,
-                    lease,
-                    retirement,
-                } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
-                SlotEffect::Remove { activation_id } => {
-                    slot.mark_removable(activation_id);
-                    self.remove_matching(&entity_id, &slot, activation_id);
+        slot.lifecycle.drive(&|output: LifecycleOutput<C, E, L>| {
+            for effect in output.effects.into_vec() {
+                match effect {
+                    SlotEffect::StartActivation { activation_id } => {
+                        runtime.start_activation(entity_id.clone(), activation_id);
+                    }
+                    SlotEffect::Deliver {
+                        activation_id,
+                        dispatch_id,
+                        endpoint,
+                        command,
+                    } => runtime.deliver(
+                        entity_id.clone(),
+                        activation_id,
+                        dispatch_id,
+                        endpoint,
+                        command,
+                    ),
+                    SlotEffect::Reject {
+                        dispatch_id,
+                        command,
+                        reason,
+                    } => runtime.reject(dispatch_id, command, reason),
+                    SlotEffect::EnqueueFence {
+                        activation_id,
+                        endpoint,
+                    } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
+                    SlotEffect::Retire {
+                        activation_id,
+                        lease,
+                        retirement,
+                    } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
+                    SlotEffect::Remove { activation_id } => {
+                        slot.mark_removable(activation_id);
+                        self.remove_matching(&entity_id, &slot, activation_id);
+                    }
                 }
             }
-        }
+        });
     }
 
     fn remove_matching(

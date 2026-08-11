@@ -14,6 +14,7 @@ categories = ["concurrency"]
 
 [dependencies]
 behavior.workspace = true
+bombay-driver.workspace = true
 bombay-transition.workspace = true
 
 [lints]

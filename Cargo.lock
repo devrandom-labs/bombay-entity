@@ -46,10 +46,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bombay-driver"
+version = "0.1.0"
+dependencies = [
+ "bombay-transition",
+]
+
+[[package]]
 name = "bombay-entity"
 version = "0.1.0"
 dependencies = [
  "bombay-behavior",
+ "bombay-driver",
  "bombay-transition",
 ]
 

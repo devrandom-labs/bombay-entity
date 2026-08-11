@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/entity", "crates/transition"]
+members = ["crates/driver", "crates/entity", "crates/transition"]
 
 [workspace.package]
 edition = "2024"
@@ -11,6 +11,7 @@ homepage = "https://github.com/devrandom-labs/bombay-entity"
 
 [workspace.dependencies]
 bombay-entity = { path = "crates/entity" }
+bombay-driver = { path = "crates/driver" }
 behavior = { package = "bombay-behavior", version = "0.9.1" }
 bombay-transition = { path = "crates/transition" }
 

@@ -169,6 +169,25 @@ and `Retiring`; the top-level reducer only dispatches over that product of sum
 types. Policy choices and asynchronous results enter as typed facts. The core
 does not acquire locks, start tasks, read clocks, or invoke endpoints.
 
+## Machine driver
+
+`bombay-transition` remains the allocation-free `no_std` description and
+composition layer. It does not gain locks, queues, or runtime policy.
+
+`bombay-driver` is the deliberately narrow execution layer between pure
+machines and entity semantics. A `Driver<M, I>` owns the current machine value,
+linearizes each input, and enqueues the corresponding output at the same point.
+One caller handles outputs in transition order; concurrent and reentrant calls
+append work for that caller. No driver synchronization is held while an output
+handler runs.
+
+The driver knows nothing about entities, activation, delivery, draining,
+Actorpass, or asynchronous executors. The entity directory supplies stable
+keyed ownership and interprets each `LifecycleOutput` as entity runtime
+capabilities. This prevents synchronization and reentrancy mechanics from
+being duplicated inside entity lifecycle policy while keeping the pure machine
+independently executable and structurally interpretable.
+
 `SlotEffectBatch` is an ordered monoid: the empty batch is its identity and
 concatenation preserves effect order. The effectful directory interpreter folds
 that algebra into Actorpass operations, tasks, replies, telemetry, and map
