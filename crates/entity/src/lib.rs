@@ -5,13 +5,14 @@
 //! that lifecycle. Actor execution, business behavior, persistence, discovery,
 //! and distributed consensus remain separate concerns.
 //!
-//! The initial runtime will implement this state machine:
+//! The runtime implements this state machine:
 //!
 //! ```text
 //! Inactive
 //!   -> Activating(generation)
 //!   -> Active(generation, actor reference)
 //!   -> Draining(generation)
+//!   -> Retiring(generation)
 //!   -> Inactive
 //! ```
 //!
@@ -34,11 +35,11 @@ pub use directory::{
     LocalDirectory,
 };
 pub use lifecycle::{
-    ActivatingSlot, ActivationId, ActivationWaiter, ActiveSlot, DispatchId, DrainFailure,
-    DrainProgress, DrainStage, DrainingSlot, EntitySlot, LIFECYCLE_TOPOLOGY, LifecycleEdge,
-    LifecycleMachine, LifecycleOutput, LifecyclePhase, LifecycleTopologyError, LifecycleTrigger,
-    Refusal, ReservationCount, RetirementMode, SlotDecision, SlotEffect, SlotEffectBatch,
-    SlotEvent, SlotReducer, TransitionEvidence, lifecycle_machine, validate_lifecycle_topology,
+    ActivatingSlot, ActivationId, ActiveSlot, DispatchId, DrainFailure, DrainStage, DrainingSlot,
+    EntitySlot, LIFECYCLE_TOPOLOGY, LifecycleEdge, LifecycleMachine, LifecycleOutput,
+    LifecyclePhase, LifecycleTopologyError, LifecycleTrigger, Refusal, RetirementMode,
+    SlotDecision, SlotEffect, SlotEffectBatch, SlotEvent, SlotReducer, TransitionEvidence,
+    lifecycle_machine, validate_lifecycle_topology,
 };
 pub use protocol::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
 pub use runtime::{

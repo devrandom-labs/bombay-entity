@@ -177,15 +177,6 @@ impl ReservationCount {
             },
         }
     }
-
-    /// Return the number of unresolved reservations.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        match self {
-            Self::Drained => 0,
-            Self::Pending(value) => value.get(),
-        }
-    }
 }
 
 enum ReservationResolution {

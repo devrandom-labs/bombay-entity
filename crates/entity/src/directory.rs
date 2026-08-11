@@ -77,6 +77,7 @@ pub trait EffectInterpreter<I, C, E, L> {
 }
 
 /// One installed lifecycle decision awaiting effect interpretation.
+#[must_use = "installed lifecycle decision awaits effect interpretation via LocalDirectory::interpret"]
 pub struct DirectoryOutput<I, C, E, L> {
     /// Checked evidence for the installed lifecycle decision.
     pub evidence: TransitionEvidence,
@@ -87,6 +88,7 @@ pub struct DirectoryOutput<I, C, E, L> {
 
 /// The installed decision for one dispatched command, with its guaranteed
 /// correlation identity.
+#[must_use = "installed lifecycle decision awaits effect interpretation via LocalDirectory::interpret"]
 pub struct DispatchOutput<I, C, E, L> {
     /// Correlation identity allocated for the dispatched command.
     pub dispatch_id: DispatchId,
@@ -373,6 +375,8 @@ where
     /// Panics if a directory shard lock was poisoned.
     #[must_use]
     pub fn len(&self) -> usize {
+        // The sum cannot overflow: every counted entry is a live heap
+        // allocation, so the total is bounded far below usize::MAX.
         self.shards
             .iter()
             .map(|shard| shard.lock().expect("directory shard lock poisoned").len())
