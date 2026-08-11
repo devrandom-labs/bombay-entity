@@ -53,6 +53,14 @@
             }
           );
           entity-nextest = craneLib.cargoNextest (commonArgs // { inherit cargoArtifacts; });
+          entity-loom = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              RUSTFLAGS = "--cfg loom";
+              cargoExtraArgs = "-p bombay-machine-executor --lib";
+            }
+          );
           entity-doctest = craneLib.cargoDocTest (commonArgs // { inherit cargoArtifacts; });
           entity-doc = craneLib.cargoDoc (commonArgs // { inherit cargoArtifacts; });
           entity-audit = craneLib.cargoAudit { inherit src advisory-db; };

@@ -89,3 +89,4 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   entity escalates poison deliberately — do NOT migrate those. Candidate scope: test harnesses
   only, as one wholesale convention migration (never mixed). Research loom interaction first:
   loom tests require loom::sync types under cfg(loom).
+- H30 loom gate wiring: KEPT (E18) — entity-loom check runs driver loom tests in nix flake check.
