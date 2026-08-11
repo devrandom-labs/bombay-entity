@@ -22,3 +22,7 @@ workspace = true
 [[bench]]
 name = "lifecycle"
 harness = false
+
+[[bench]]
+name = "directory"
+harness = false

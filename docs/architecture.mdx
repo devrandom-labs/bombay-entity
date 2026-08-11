@@ -483,6 +483,28 @@ The standard-library capability check uses the Rust 1.96 documentation for
 [`AtomicU64`](https://doc.rust-lang.org/1.96.0/std/sync/atomic/type.AtomicU64.html),
 and [`HashMap`](https://doc.rust-lang.org/1.96.0/std/collections/struct.HashMap.html).
 
+### Baseline measurements
+
+`crates/entity/benches/directory.rs` is a dependency-free retained benchmark
+that measures a single hot activating slot, insertion of independent entity
+identifiers, and eight-thread contention on one slot. On 2026-08-11, an Apple
+M4 Pro running Darwin 25.5.0 and the Rust 1.96 release profile produced:
+
+```text
+sequential_iterations=1000000
+sequential_hot_key=54.874958ms
+sequential_independent_keys=155.090167ms
+threads=8
+contended_iterations_per_thread=100000
+contended_hot_key=147.793875ms
+```
+
+These correspond to about 54.9 ns per hot-key submission, 155.1 ns per new
+independent slot, and 184.7 ns per contended submission. They are a regression
+baseline, not a cross-machine comparison. The hot-key case intentionally fills
+the bounded waiter set and then measures typed refusal through the same slot
+machine; later endpoint benchmarks must separately measure active delivery.
+
 - [Orleans grain directory](https://learn.microsoft.com/en-us/dotnet/orleans/host/grain-directory)
 - [Orleans virtual actor technical report](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Orleans-MSR-TR-2014-41.pdf)
 - [Apache Pekko Cluster Sharding](https://pekko.apache.org/docs/pekko/1.0.2/typed/cluster-sharding.html)
