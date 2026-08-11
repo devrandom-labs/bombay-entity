@@ -46,20 +46,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "bombay-driver"
-version = "0.1.0"
-dependencies = [
- "bombay-transition",
-]
-
-[[package]]
 name = "bombay-entity"
 version = "0.1.0"
 dependencies = [
  "bombay-behavior",
- "bombay-driver",
+ "bombay-machine-executor",
  "bombay-transition",
  "loom",
+]
+
+[[package]]
+name = "bombay-machine-executor"
+version = "0.1.0"
+dependencies = [
+ "bombay-transition",
 ]
 
 [[package]]

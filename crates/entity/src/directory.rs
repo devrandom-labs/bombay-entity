@@ -6,7 +6,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bombay_driver::Driver;
+use bombay_machine_executor::MachineExecutor;
 
 use crate::{
     ActivationId, DispatchId, DrainFailure, EntityId, LifecycleMachine, LifecycleOutput, Refusal,
@@ -85,7 +85,7 @@ pub struct DirectoryOutput<I, C, E, L> {
 }
 
 struct Slot<C, E, L> {
-    lifecycle: Driver<LifecycleMachine<C, E, L>, SlotEvent<C, E, L>>,
+    lifecycle: MachineExecutor<LifecycleMachine<C, E, L>, SlotEvent<C, E, L>>,
     removable_activation: Mutex<Option<ActivationId>>,
 }
 
@@ -97,17 +97,16 @@ struct Installed {
 impl<C, E: Clone, L> Slot<C, E, L> {
     fn new() -> Self {
         Self {
-            lifecycle: Driver::new(lifecycle_machine()),
+            lifecycle: MachineExecutor::new(lifecycle_machine()),
             removable_activation: Mutex::new(None),
         }
     }
 
     fn submit(&self, event: SlotEvent<C, E, L>) -> Installed {
-        self.lifecycle
-            .advance(event, |output, successor| Installed {
-                evidence: output.evidence,
-                activation_id: successor.state().activation_id(),
-            })
+        self.lifecycle.submit(event, |output, successor| Installed {
+            evidence: output.evidence,
+            activation_id: successor.state().activation_id(),
+        })
     }
 
     fn activation_id(&self) -> Option<ActivationId> {
@@ -421,45 +420,46 @@ where
         let DirectoryOutput {
             entity_id, slot, ..
         } = output;
-        slot.lifecycle.drive(&|output: LifecycleOutput<C, E, L>| {
-            for effect in output.effects.into_vec() {
-                match effect {
-                    SlotEffect::StartActivation { activation_id } => {
-                        runtime.start_activation(entity_id.clone(), activation_id);
-                    }
-                    SlotEffect::Deliver {
-                        activation_id,
-                        dispatch_id,
-                        endpoint,
-                        command,
-                    } => runtime.deliver(
-                        entity_id.clone(),
-                        activation_id,
-                        dispatch_id,
-                        endpoint,
-                        command,
-                    ),
-                    SlotEffect::Reject {
-                        dispatch_id,
-                        command,
-                        reason,
-                    } => runtime.reject(dispatch_id, command, reason),
-                    SlotEffect::EnqueueFence {
-                        activation_id,
-                        endpoint,
-                    } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
-                    SlotEffect::Retire {
-                        activation_id,
-                        lease,
-                        retirement,
-                    } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
-                    SlotEffect::Remove { activation_id } => {
-                        slot.mark_removable(activation_id);
-                        self.remove_matching(&entity_id, &slot, activation_id);
+        slot.lifecycle
+            .interpret_pending(&|output: LifecycleOutput<C, E, L>| {
+                for effect in output.effects.into_vec() {
+                    match effect {
+                        SlotEffect::StartActivation { activation_id } => {
+                            runtime.start_activation(entity_id.clone(), activation_id);
+                        }
+                        SlotEffect::Deliver {
+                            activation_id,
+                            dispatch_id,
+                            endpoint,
+                            command,
+                        } => runtime.deliver(
+                            entity_id.clone(),
+                            activation_id,
+                            dispatch_id,
+                            endpoint,
+                            command,
+                        ),
+                        SlotEffect::Reject {
+                            dispatch_id,
+                            command,
+                            reason,
+                        } => runtime.reject(dispatch_id, command, reason),
+                        SlotEffect::EnqueueFence {
+                            activation_id,
+                            endpoint,
+                        } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
+                        SlotEffect::Retire {
+                            activation_id,
+                            lease,
+                            retirement,
+                        } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
+                        SlotEffect::Remove { activation_id } => {
+                            slot.mark_removable(activation_id);
+                            self.remove_matching(&entity_id, &slot, activation_id);
+                        }
                     }
                 }
-            }
-        });
+            });
     }
 
     fn remove_matching(

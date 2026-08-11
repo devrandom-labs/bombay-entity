@@ -11,7 +11,7 @@ homepage = "https://github.com/devrandom-labs/bombay-entity"
 
 [workspace.dependencies]
 bombay-entity = { path = "crates/entity" }
-bombay-driver = { path = "crates/driver" }
+bombay-machine-executor = { path = "crates/driver" }
 behavior = { package = "bombay-behavior", version = "0.9.1" }
 bombay-transition = { path = "crates/transition" }
 

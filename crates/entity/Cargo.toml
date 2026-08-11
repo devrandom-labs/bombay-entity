@@ -14,7 +14,7 @@ categories = ["concurrency"]
 
 [dependencies]
 behavior.workspace = true
-bombay-driver.workspace = true
+bombay-machine-executor.workspace = true
 bombay-transition.workspace = true
 
 [dev-dependencies]

@@ -1,9 +1,9 @@
 //! Ordered concurrent execution for pure representable machines.
 //!
-//! A [`Driver`] owns the current value of a [`Machine`]. Inputs advance that
-//! value under short synchronization and enqueue the corresponding outputs at
-//! the same linearization point. Exactly one caller interprets queued outputs;
-//! reentrant and concurrent callers append work for that interpreter.
+//! A [`MachineExecutor`] owns the current value of a [`Machine`]. Inputs
+//! advance that value under short synchronization and enqueue the corresponding
+//! outputs at the same linearization point. Exactly one caller interprets
+//! queued outputs; reentrant and concurrent callers append work for it.
 
 #![deny(missing_docs)]
 
@@ -13,13 +13,13 @@ use std::sync::Mutex;
 
 pub use bombay_transition::Machine;
 
-/// Interprets one machine output without driver synchronization held.
-pub trait Handler<O> {
+/// Interprets one machine output without executor synchronization held.
+pub trait OutputInterpreter<O> {
     /// Handle the next output in machine transition order.
     fn handle(&self, output: O);
 }
 
-impl<O, F> Handler<O> for F
+impl<O, F> OutputInterpreter<O> for F
 where
     F: Fn(O),
 {
@@ -29,7 +29,7 @@ where
 }
 
 /// A live, linearizable execution of one pure machine.
-pub struct Driver<M, I>
+pub struct MachineExecutor<M, I>
 where
     M: Machine<I>,
 {
@@ -43,11 +43,11 @@ struct Execution<M, O> {
     handling: bool,
 }
 
-impl<M, I> Driver<M, I>
+impl<M, I> MachineExecutor<M, I>
 where
     M: Machine<I>,
 {
-    /// Start driving `machine` with an empty output queue.
+    /// Create a live execution of `machine` with an empty output queue.
     #[must_use]
     pub fn new(machine: M) -> Self {
         Self {
@@ -63,15 +63,15 @@ where
     /// Advance the machine and enqueue its output atomically.
     ///
     /// The observer runs while the transition is linearized and may copy small
-    /// evidence from the output. It must not call back into this driver.
+    /// evidence from the output. It must not call back into this executor.
     ///
     /// # Panics
     ///
     /// Panics after synchronization poison or if a previous machine transition
     /// panicked after taking ownership of the machine value.
-    pub fn advance<T>(&self, input: I, observe: impl FnOnce(&M::Output, &M) -> T) -> T {
-        let mut execution = self.execution.lock().expect("driver lock poisoned");
-        let machine = execution.machine.take().expect("driver machine missing");
+    pub fn submit<T>(&self, input: I, observe: impl FnOnce(&M::Output, &M) -> T) -> T {
+        let mut execution = self.execution.lock().expect("executor lock poisoned");
+        let machine = execution.machine.take().expect("executor machine missing");
         let (output, successor) = machine.step(input);
         let observed = observe(&output, &successor);
         execution.machine = Some(successor);
@@ -81,15 +81,20 @@ where
 
     /// Inspect the current machine under the same synchronization as advances.
     ///
-    /// The observer must be short and must not call back into this driver.
+    /// The observer must be short and must not call back into this executor.
     ///
     /// # Panics
     ///
     /// Panics after synchronization poison or if a transition panic consumed
     /// the current machine value.
     pub fn inspect<T>(&self, observe: impl FnOnce(&M) -> T) -> T {
-        let execution = self.execution.lock().expect("driver lock poisoned");
-        observe(execution.machine.as_ref().expect("driver machine missing"))
+        let execution = self.execution.lock().expect("executor lock poisoned");
+        observe(
+            execution
+                .machine
+                .as_ref()
+                .expect("executor machine missing"),
+        )
     }
 
     /// Interpret every currently or reentrantly queued output in transition order.
@@ -99,25 +104,25 @@ where
     ///
     /// # Panics
     ///
-    /// Panics if driver synchronization was poisoned.
-    pub fn drive<H>(&self, handler: &H)
+    /// Panics if executor synchronization was poisoned.
+    pub fn interpret_pending<H>(&self, interpreter: &H)
     where
-        H: Handler<M::Output>,
+        H: OutputInterpreter<M::Output>,
     {
         {
-            let mut execution = self.execution.lock().expect("driver lock poisoned");
+            let mut execution = self.execution.lock().expect("executor lock poisoned");
             if execution.handling {
                 return;
             }
             execution.handling = true;
         }
         while let Some(output) = self.next_output() {
-            handler.handle(output);
+            interpreter.handle(output);
         }
     }
 
     fn next_output(&self) -> Option<M::Output> {
-        let mut execution = self.execution.lock().expect("driver lock poisoned");
+        let mut execution = self.execution.lock().expect("executor lock poisoned");
         if let Some(output) = execution.outputs.pop_front() {
             Some(output)
         } else {
@@ -133,7 +138,7 @@ mod tests {
 
     use bombay_transition::{Base, Topology};
 
-    use super::Driver;
+    use super::MachineExecutor;
 
     const EMPTY: Topology = Topology {
         name: "sum",
@@ -144,14 +149,14 @@ mod tests {
 
     #[test]
     fn outputs_retain_transition_order() {
-        let driver = Driver::new(Base::new(0_u8, EMPTY, |state: u8, input: u8| {
+        let executor = MachineExecutor::new(Base::new(0_u8, EMPTY, |state: u8, input: u8| {
             (input, state.wrapping_add(input))
         }));
-        driver.advance(1, |_, _| ());
-        driver.advance(2, |_, _| ());
-        driver.advance(3, |_, _| ());
+        executor.submit(1, |_, _| ());
+        executor.submit(2, |_, _| ());
+        executor.submit(3, |_, _| ());
         let outputs = Mutex::new(Vec::new());
-        driver.drive(&|output| outputs.lock().unwrap().push(output));
+        executor.interpret_pending(&|output| outputs.lock().unwrap().push(output));
         assert_eq!(*outputs.lock().unwrap(), [1, 2, 3]);
     }
 }
