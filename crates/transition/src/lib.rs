@@ -1,4 +1,4 @@
-//! Minimal algebra for deterministic, effect-describing state machines.
+//! Composable, representable, executable state machines.
 //!
 //! A reducer is the total function `State × Event → State × Effects`. It does
 //! not execute effects, choose a transport, own locks, or prescribe storage.
@@ -10,9 +10,27 @@
 //! kernel when their decisions are deterministic and their effects can be
 //! represented as data. It is not appropriate for algorithms whose state is
 //! intrinsically external or whose correctness depends on hidden I/O.
+//!
+//! [`Machine`] retains sequential, product, and choice composition as concrete
+//! structure. The same value can therefore be executed with [`Machine::step`]
+//! and inspected with [`Machine::describe`]. Composition is static and
+//! allocation-free: Rust monomorphizes the concrete composition tree.
+//!
+//! Bombay Entity can use this to keep its executable lifecycle synchronized
+//! with topology documentation and reference models. Actorpass could later use
+//! it for supervision or incarnation protocols without depending on entity
+//! semantics. It should not replace Actorpass's event loop, mailbox, scheduler,
+//! or resource ownership: those are interpreters and runtime capabilities, not
+//! deterministic machine descriptions.
 
 #![no_std]
 #![deny(missing_docs)]
+
+mod machine;
+
+pub use machine::{
+    Base, Choice, Compose, Either, Machine, Product, Structure, Then, Topology, Transition,
+};
 
 /// The value produced by one deterministic reduction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
