@@ -414,33 +414,28 @@ locks.
 10. Application, actor, telemetry, clock, and policy code never run under
     directory locks.
 
-## First blocking milestone
+## Verification strategy
 
-Implementation begins with a narrow spike, before choosing a directory map or
-broad public API:
+The state machine, machine executor, directory, and runtime facade remain
+independent of Actorpass. Deterministic tests cover lifecycle decisions,
+command ownership, cancellation, reentrant interpretation, exact retirement,
+and the concise asynchronous API. The bounded trace test enumerates the finite
+event alphabet and compares every successor with the independent structural
+model while checking declared-edge evidence.
 
-1. **Actorpass transactional activation adapter**
-   - prepare provisional resources;
-   - initialize behavior and interpret initialization effects;
-   - commit exact-incarnation registration;
-   - launch the initialized loop;
-   - return separate endpoint and affine lease;
-   - retire and await an incarnation rejected by stale directory validation.
-2. **Pure entity behavior wrapper**
-   - define `EntityProtocol::Command` and `EntityProtocol::DrainFence`;
-   - forward domain commands unchanged;
-   - acknowledge a fence without changing inner state;
-   - prove acknowledgement ordering relative to prior effects.
-3. **One-entity reference slot**
-   - directory-owned single-flight activation;
-   - bounded activation waiters;
-   - dispatch reservation and command recovery;
-   - graceful fence and retirement;
-   - stale activation and termination rejection.
+Four Loom models explore activation claim, delivery/drain ordering,
+slot-replacement removal, and cancellation/activation ownership interleavings.
+Retained stress tests exercise one hot identifier and many independent
+identifiers across shards. A byte-oriented fuzz target is not retained because
+there is no parser, unsafe code, or unconstrained input structure, and the pure
+finite transition alphabet is enumerated directly; Loom covers the concurrent
+nondeterminism that ordinary fuzzing would sample weakly.
 
-The state machine and reference model remain independent of Actorpass. A
-deterministic fake incarnation runtime drives model, property, cancellation,
-Loom, stress, and fuzz verification before performance specialization.
+Miri is not available in the pinned Rust 1.96 Nix toolchain (`cargo miri`
+reports that no such command is installed). The implementation contains no
+`unsafe` blocks. The reproducible gates are workspace tests, strict all-target
+Clippy, the retained Loom and stress tests, both benchmarks, LLVM coverage, and
+all eight flake checks.
 
 ## Research basis
 
