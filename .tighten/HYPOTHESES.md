@@ -48,20 +48,20 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 - H14 runtime Completion: REJECTED at analysis — see DEAD_ENDS. → oneshot channel (tokio already in tree). Verify wake semantics +
   cancel-on-drop parity with runtime.rs tests.
 - H15 driver TurnCompletion: KEPT (E15). notify_all → notify_one (unique waiter per receipt). Trivial, loom-gated.
-- H16 dashmap vs sharded std Mutex<HashMap>: contended bench (190ms baseline) is the decider.
+- H16 dashmap: REJECTED — reentrancy conflict, see DEAD_ENDS. vs sharded std Mutex<HashMap>: contended bench (190ms baseline) is the decider.
   High bar: dashmap semantic fit (no remove-if with slot identity check? we need
   compare-and-remove on (Arc ptr, ActivationId)) — verify entry API supports it atomically.
 
 ## P4 — concurrency/perf deep probes (research first)
-- H17 LinearizedExecutor poison asymmetry vs SerializedExecutor recovery. WARNING: panic
+- H17 LinearizedExecutor poison: REJECTED by contract — documented semantics. asymmetry vs SerializedExecutor recovery. WARNING: panic
   guarantees are finalized contract — research whether propagation is documented intent before
   proposing anything. Possibly doc-only outcome.
-- H18 endpoint clone per Deliver effect (lifecycle/mod.rs:650,704,785,887) — E: Clone bound on
+- H18 endpoint clone: REJECTED by contract — finalized algebra. per Deliver effect (lifecycle/mod.rs:650,704,785,887) — E: Clone bound on
   SlotReducer. Measure clone cost in benches first; consider Arc-based capability sharing only
   if measurable. Threatened invariant: affine ownership — lease must NOT be shared; endpoint may.
-- H19 LinearizedExecutor evidence double-store + clone (driver:274,308,328) — return-only or
+- H19 LinearizedExecutor evidence: REJECTED — see DEAD_ENDS. double-store + clone (driver:274,308,328) — return-only or
   shared-ref accessor. Bench submit path.
-- H20 protocol.rs:139 vec![] per fence ack — rare path; likely reject after measurement.
+- H20 protocol: REJECTED — cold path, port-mandated..rs:139 vec![] per fence ack — rare path; likely reject after measurement.
 
 ## P5 — verification backfill (tests only, semantics untouched)
 - H21 init/preparation failure → Inactive cleanup test (doc invariant 3).

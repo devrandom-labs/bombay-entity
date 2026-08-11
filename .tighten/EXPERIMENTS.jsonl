@@ -30,3 +30,7 @@
 {"id":"E15b","hypothesis":"H14","status":"rejected-at-analysis","result":"oneshot cannot express Consumed state needed by Drop cancel; entity core is runtime-free by design","finished":"2026-08-11"}
 {"id":"E16","hypothesis":"H13","change":"SlotEffectBatch internals -> SmallVec<[SlotEffect;1]>, public API unchanged","falsifier":"lifecycle/directory bench min regresses >5% or batch semantics tests fail","rollback":"git revert","status":"started","started":"2026-08-11"}
 {"id":"E16","hypothesis":"H13","status":"reverted","result":"reproducible 5-9% min regressions on directory workloads; SmallVec footprint larger than custom enum; reverted","finished":"2026-08-11"}
+{"id":"E16b","hypothesis":"H16","status":"rejected-at-analysis","result":"dashmap guards forbid the tested reentrant interpretation contract","finished":"2026-08-11"}
+{"id":"E16c","hypothesis":"H17","status":"rejected-by-contract","result":"LinearizedExecutor poison propagation is documented finalized panic semantics","finished":"2026-08-11"}
+{"id":"E16d","hypothesis":"H18","status":"rejected-by-contract","result":"capability clone in Deliver is finalized algebra; runtime chooses E to control cost","finished":"2026-08-11"}
+{"id":"E16e","hypothesis":"H19,H20","status":"rejected-at-analysis","result":"evidence store-clone is Copy-trivial and required by accessor; fence vec! is cold and port-mandated","finished":"2026-08-11"}

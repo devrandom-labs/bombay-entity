@@ -31,3 +31,34 @@ explicit capacity field, growing the per-decision Decision move. Reproducible
 min-of-7 regressions: activating_hot_key +5.9%, active_hot_key +8.9%,
 independent_keys +9.0% (two runs). The hand-rolled enum is smaller and faster;
 the custom machinery stays. Reverted.
+
+## H16 dashmap for directory shards (rejected at analysis, 2026-08-11)
+Reentrant interpretation is a tested feature
+(directory.rs::reentrant_delivery_resolution_appends_fence_to_current_interpreter):
+an interpreter callback submits new facts to the same directory. dashmap shard
+guards forbid reentrant access (documented deadlock hazard), so the reentrancy
+contract cannot be preserved. The manual sharding is ~30 lines with a simple
+lock-order proof. No benchmark run: semantic mismatch is disqualifying.
+
+## H17 LinearizedExecutor poison asymmetry (rejected by contract, 2026-08-11)
+"Panics after synchronization poison or a transition panic that consumed the
+affine machine state" is documented public behavior; panic guarantees are
+finalized contract. No change proposed.
+
+## H18 endpoint clone per Deliver (rejected by contract, 2026-08-11)
+SlotEffect::Deliver owns a clone of the delivery-only capability by design
+("Clone of the delivery-only capability", lifecycle/mod.rs). Effects outlive
+the slot state, so borrowing is impossible; Arc inside the effect would change
+the finalized public algebra. Runtimes choose E (e.g. Arc-wrapped) to control
+clone cost. No change.
+
+## H19 LinearizedExecutor evidence double-store (rejected at analysis, 2026-08-11)
+evidence() requires stored evidence; the submit-time clone is the single copy
+into storage. The only in-workspace Evidence type is (TransitionEvidence,
+Option<ActivationId>) — Copy. No measurable win without changing the public
+evidence() accessor contract.
+
+## H20 vec! per fence acknowledgement (rejected at analysis, 2026-08-11)
+protocol.rs:139 allocates once per passivation (cold by design), and the
+behavior-crate port takes ownership of a Vec<Delivery>. No alternative shape
+without changing the external port.
