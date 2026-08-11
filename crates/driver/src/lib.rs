@@ -348,22 +348,31 @@ where
 
     /// Dispatch queued outputs until empty, or contribute them to another owner.
     ///
-    /// A return value of `false` means another caller owns dispatch and this
-    /// call is fire-and-forget; it does not mean the caller's output completed.
-    /// If a handler panics, its owned output is dropped exactly once and a later
-    /// call resumes with the remaining queue.
-    pub fn dispatch_pending<H>(&self, handler: &H) -> bool
+    /// [`DispatchOutcome::OwnedElsewhere`] means another caller owns dispatch
+    /// and this call is fire-and-forget; it does not mean the caller's output
+    /// completed. If a handler panics, its owned output is dropped exactly once
+    /// and a later call resumes with the remaining queue.
+    pub fn dispatch_pending<H>(&self, handler: &H) -> DispatchOutcome
     where
         H: OutputHandler<M::Output>,
     {
         let Some(mut ownership) = DispatchOwnership::acquire(&self.execution) else {
-            return false;
+            return DispatchOutcome::OwnedElsewhere;
         };
         while let Some(output) = ownership.next() {
             handler.handle(output);
         }
-        true
+        DispatchOutcome::Drained
     }
+}
+
+/// Ownership result of one [`LinearizedExecutor::dispatch_pending`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    /// This call owned dispatch and drained the output queue.
+    Drained,
+    /// Another caller owns dispatch; queued outputs will be handled there.
+    OwnedElsewhere,
 }
 
 struct DispatchOwnership<'a, M, O, E> {
@@ -514,7 +523,10 @@ mod tests {
             .is_err()
         );
         let seen = Mutex::new(Vec::new());
-        assert!(executor.dispatch_pending(&|output: Output| seen.lock().unwrap().push(output.0)));
+        assert_eq!(
+            executor.dispatch_pending(&|output: Output| seen.lock().unwrap().push(output.0)),
+            super::DispatchOutcome::Drained
+        );
         assert_eq!(*seen.lock().unwrap(), [2]);
     }
 

@@ -24,3 +24,18 @@
 1. Collect scout reports → write INVENTORY.md, HYPOTHESES.md, SOURCES.md, DEAD_ENDS.md (empty with header).
 2. Record bench baseline into .tighten/BASELINE.md when bg_2 finishes.
 3. Write GOAL.md + hand off `/loop goal … --check …` + `/loop run` invocation.
+
+## Loop iterations (2026-08-11)
+- E01 KEPT 633afba: thiserror::Error on all 6 error types (default-features=false, no_std safe).
+- E02 KEPT be05f8e: checked arithmetic (shard mask precomputed, reserve/resolve checked).
+- E03 KEPT-MIN 118af4d: named ActivationError discard + boundary comment; deeper propagation rejected (finalized algebra).
+- E04 KEPT 118af4d: structural Relaxed proof documented on allocate().
+- E05 KEPT 3d5db92: passivate -> Passivation enum (Begun/NotActive/AlreadyPassivating/Superseded); public seam closure, migration in commit.
+- E06 KEPT 3e75854: CompletionState Awaiting/Ready/Consumed; completed flag removed.
+- E07 KEPT f70ec7f: driver TurnState/DispatchState enums; Option-token guards; armed/acquired/running/poisoned/dispatching gone.
+- Gate green after every experiment. SCORE 994132 -> 994701.
+- Discovery: loom tests are NOT wired into nix gate (cfg loom never set there); driver loom tests run via RUSTFLAGS='--cfg loom' cargo test --lib. Verification-gap hypothesis material.
+- Rule note: rs-parking-lot user rule recorded as H29 (test-harness-only migration candidate); rs-future-prelude rule applied (Future from 2024 prelude).
+
+## Next
+P2 sentinels: H08 (DirectoryOutput.dispatch_id Option split), H09 (machine: Option<M> mid-step), H10-H12. Then H26 bench-noise prerequisite before P3/P4 perf work. New: dispatch_pending -> bool is a boolean protocol result (convert to enum or justify).

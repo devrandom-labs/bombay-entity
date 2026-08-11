@@ -476,7 +476,7 @@ where
         entity_id: &EntityId<I>,
         slot: &Arc<Slot<C, E, L>>,
         activation_id: ActivationId,
-    ) -> bool {
+    ) {
         let mut entries = self.shards[self.shard_index(entity_id)]
             .lock()
             .expect("directory shard lock poisoned");
@@ -487,7 +487,6 @@ where
         if matches {
             entries.remove(entity_id);
         }
-        matches
     }
 
     fn shard_index(&self, entity_id: &EntityId<I>) -> usize {
