@@ -98,7 +98,6 @@ pub struct DispatchOutput<I, C, E, L> {
 
 struct Slot<C, E, L> {
     lifecycle: LinearizedExecutor<LifecycleMachine<C, E, L>>,
-    removable_activation: Mutex<Option<ActivationId>>,
 }
 
 struct Installed {
@@ -110,7 +109,6 @@ impl<C, E: Clone, L> Slot<C, E, L> {
     fn new() -> Self {
         Self {
             lifecycle: LinearizedExecutor::new(lifecycle_machine()),
-            removable_activation: Mutex::new(None),
         }
     }
 
@@ -124,21 +122,6 @@ impl<C, E: Clone, L> Slot<C, E, L> {
 
     fn activation_id(&self) -> Option<ActivationId> {
         self.lifecycle.evidence().and_then(|evidence| evidence.1)
-    }
-
-    fn mark_removable(&self, activation_id: ActivationId) {
-        *self
-            .removable_activation
-            .lock()
-            .expect("slot lock poisoned") = Some(activation_id);
-    }
-
-    fn removable_as(&self, activation_id: ActivationId) -> bool {
-        *self
-            .removable_activation
-            .lock()
-            .expect("slot lock poisoned")
-            == Some(activation_id)
     }
 }
 
@@ -468,28 +451,23 @@ where
                         lease,
                         retirement,
                     } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
-                    SlotEffect::Remove { activation_id } => {
-                        slot.mark_removable(activation_id);
-                        self.remove_matching(&entity_id, &slot, activation_id);
+                    // A mapped slot never acquires a second activation, so
+                    // pointer identity is the exact removal authority.
+                    SlotEffect::Remove { .. } => {
+                        self.remove_matching(&entity_id, &slot);
                     }
                 });
             });
     }
 
-    fn remove_matching(
-        &self,
-        entity_id: &EntityId<I>,
-        slot: &Arc<Slot<C, E, L>>,
-        activation_id: ActivationId,
-    ) {
+    fn remove_matching(&self, entity_id: &EntityId<I>, slot: &Arc<Slot<C, E, L>>) {
         let mut entries = self.shards[self.shard_index(entity_id)]
             .lock()
             .expect("directory shard lock poisoned");
-        let matches = entries
+        if entries
             .get(entity_id)
             .is_some_and(|stored| Arc::ptr_eq(stored, slot))
-            && slot.removable_as(activation_id);
-        if matches {
+        {
             entries.remove(entity_id);
         }
     }
