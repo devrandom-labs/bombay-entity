@@ -18,3 +18,7 @@ bombay-transition.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "lifecycle"
+harness = false

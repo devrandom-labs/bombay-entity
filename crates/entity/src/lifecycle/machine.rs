@@ -505,4 +505,120 @@ mod tests {
             TransitionEvidence::Traversed(LifecycleEdge::ForceDrain)
         );
     }
+
+    #[derive(Clone, Copy)]
+    enum Input {
+        ClaimCurrent,
+        Dispatch,
+        ActivationCurrent,
+        ActivationStale,
+        ActivationFailure,
+        DeliveryCurrent,
+        BeginDrainCurrent,
+        BeginDrainStale,
+        FenceCurrent,
+        ForceCurrent,
+        TerminatedCurrent,
+        TerminatedStale,
+    }
+
+    const INPUTS: [Input; 12] = [
+        Input::ClaimCurrent,
+        Input::Dispatch,
+        Input::ActivationCurrent,
+        Input::ActivationStale,
+        Input::ActivationFailure,
+        Input::DeliveryCurrent,
+        Input::BeginDrainCurrent,
+        Input::BeginDrainStale,
+        Input::FenceCurrent,
+        Input::ForceCurrent,
+        Input::TerminatedCurrent,
+        Input::TerminatedStale,
+    ];
+
+    fn event(input: Input) -> SlotEvent<u8, u8, u8> {
+        match input {
+            Input::ClaimCurrent => SlotEvent::ClaimActivation {
+                activation_id: activation(1),
+                dispatch_id: DispatchId(1),
+                command: 1,
+                waiter_limit: NonZeroUsize::new(2).unwrap(),
+            },
+            Input::Dispatch => SlotEvent::Dispatch {
+                dispatch_id: DispatchId(2),
+                command: 2,
+            },
+            Input::ActivationCurrent => SlotEvent::ActivationSucceeded {
+                activation_id: activation(1),
+                endpoint: 1,
+                lease: 1,
+            },
+            Input::ActivationStale => SlotEvent::ActivationSucceeded {
+                activation_id: activation(2),
+                endpoint: 2,
+                lease: 2,
+            },
+            Input::ActivationFailure => SlotEvent::ActivationFailed {
+                activation_id: activation(1),
+            },
+            Input::DeliveryCurrent => SlotEvent::DeliveryResolved {
+                activation_id: activation(1),
+                failure: None,
+            },
+            Input::BeginDrainCurrent => SlotEvent::BeginDrain {
+                activation_id: activation(1),
+            },
+            Input::BeginDrainStale => SlotEvent::BeginDrain {
+                activation_id: activation(2),
+            },
+            Input::FenceCurrent => SlotEvent::FenceAcknowledged {
+                activation_id: activation(1),
+            },
+            Input::ForceCurrent => SlotEvent::ForceDrain {
+                activation_id: activation(1),
+                failure: DrainFailure {
+                    stage: DrainStage::FenceAcknowledgement,
+                    outstanding_reservations: 0,
+                },
+            },
+            Input::TerminatedCurrent => SlotEvent::Terminated {
+                activation_id: activation(1),
+            },
+            Input::TerminatedStale => SlotEvent::Terminated {
+                activation_id: activation(2),
+            },
+        }
+    }
+
+    fn check_trace(trace: &[Input], model: LifecycleModel) {
+        let mut machine = lifecycle_machine::<u8, u8, u8>();
+        for input in trace {
+            let before = machine.describe(&mut LifecycleModelInterpreter);
+            let (output, successor) = machine.step(event(*input));
+            if let TransitionEvidence::Traversed(edge) = output.evidence {
+                assert!(model.contains(edge));
+            }
+            assert_eq!(successor.describe(&mut LifecycleModelInterpreter), before);
+            machine = successor;
+        }
+    }
+
+    fn enumerate(prefix: &mut Vec<Input>, remaining: usize, model: LifecycleModel) {
+        check_trace(prefix, model);
+        if remaining == 0 {
+            return;
+        }
+        for input in INPUTS {
+            prefix.push(input);
+            enumerate(prefix, remaining - 1, model);
+            prefix.pop();
+        }
+    }
+
+    #[test]
+    fn bounded_event_traces_preserve_topology_evidence_and_structure() {
+        let model = lifecycle_machine::<u8, u8, u8>().describe(&mut LifecycleModelInterpreter);
+        enumerate(&mut Vec::new(), 4, model);
+    }
 }
