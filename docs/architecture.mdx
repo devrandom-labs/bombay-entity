@@ -478,6 +478,9 @@ supported 64-bit targets. Activation and dispatch sequences use relaxed atomic
 increments because uniqueness depends only on each atomic modification order;
 slot mutexes establish the state-transition happens-before relationships.
 Sequence wrap is rejected rather than reused, preventing an ABA-like identity.
+Effect batches store zero or one effect inline, so the steady active-delivery
+path does not allocate for lifecycle effects. Multi-effect activation completion
+allocates only when ownership of several bounded waiters must be released.
 
 The directory linearization points refine the lifecycle points above:
 
@@ -526,17 +529,17 @@ M4 Pro running Darwin 25.5.0 and the Rust 1.96 release profile produced:
 
 ```text
 iterations=1000000
-activating_hot_key=127.250625ms
-active_hot_key=225.265208ms
+activating_hot_key=105.417334ms
+active_hot_key=207.461292ms
 independent_iterations=100000
-independent_keys=28.246375ms
+independent_keys=31.009ms
 threads=8
 contended_iterations_per_thread=100000
-contended_active_key=288.531917ms
+contended_active_key=279.07625ms
 ```
 
-These correspond to about 127.3 ns per activating-slot submission, 225.3 ns per
-active delivery and resolution, 282.5 ns per new independent slot, and 360.7 ns
+These correspond to about 105.4 ns per activating-slot submission, 207.5 ns per
+active delivery and resolution, 310.1 ns per new independent slot, and 348.8 ns
 per contended active delivery and resolution. Every lifecycle output is
 interpreted, so the benchmark does not accumulate a synthetic pending-effect
 backlog. These are regression baselines, not cross-machine comparisons.

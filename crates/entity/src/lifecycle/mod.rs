@@ -336,49 +336,86 @@ pub enum SlotEffect<C, E, L> {
 
 /// Ordered monoidal collection of slot effects.
 #[derive(Debug)]
-pub struct SlotEffectBatch<C, E, L>(Vec<SlotEffect<C, E, L>>);
+pub struct SlotEffectBatch<C, E, L>(EffectStorage<C, E, L>);
+
+#[derive(Debug)]
+enum EffectStorage<C, E, L> {
+    Empty,
+    One(SlotEffect<C, E, L>),
+    Many(Vec<SlotEffect<C, E, L>>),
+}
 
 impl<C, E, L> SlotEffectBatch<C, E, L> {
     fn one(effect: SlotEffect<C, E, L>) -> Self {
-        Self(vec![effect])
+        Self(EffectStorage::One(effect))
     }
 
     /// Borrow the ordered effects.
     #[must_use]
     pub fn as_slice(&self) -> &[SlotEffect<C, E, L>] {
-        &self.0
+        match &self.0 {
+            EffectStorage::Empty => &[],
+            EffectStorage::One(effect) => core::slice::from_ref(effect),
+            EffectStorage::Many(effects) => effects,
+        }
     }
 
     /// Consume the batch and return its ordered effects.
     #[must_use]
     pub fn into_vec(self) -> Vec<SlotEffect<C, E, L>> {
-        self.0
+        match self.0 {
+            EffectStorage::Empty => Vec::new(),
+            EffectStorage::One(effect) => vec![effect],
+            EffectStorage::Many(effects) => effects,
+        }
+    }
+
+    /// Consume effects in declaration order without allocating for zero or one effect.
+    pub fn for_each(self, mut interpret: impl FnMut(SlotEffect<C, E, L>)) {
+        match self.0 {
+            EffectStorage::Empty => {}
+            EffectStorage::One(effect) => interpret(effect),
+            EffectStorage::Many(effects) => effects.into_iter().for_each(interpret),
+        }
+    }
+
+    fn push(&mut self, effect: SlotEffect<C, E, L>) {
+        match core::mem::replace(&mut self.0, EffectStorage::Empty) {
+            EffectStorage::Empty => self.0 = EffectStorage::One(effect),
+            EffectStorage::One(first) => self.0 = EffectStorage::Many(vec![first, effect]),
+            EffectStorage::Many(mut effects) => {
+                effects.push(effect);
+                self.0 = EffectStorage::Many(effects);
+            }
+        }
     }
 }
 
 impl<C, E, L> Extend<SlotEffect<C, E, L>> for SlotEffectBatch<C, E, L> {
     fn extend<T: IntoIterator<Item = SlotEffect<C, E, L>>>(&mut self, effects: T) {
-        self.0.extend(effects);
+        effects.into_iter().for_each(|effect| self.push(effect));
     }
 }
 
 impl<C, E, L> FromIterator<SlotEffect<C, E, L>> for SlotEffectBatch<C, E, L> {
     fn from_iter<T: IntoIterator<Item = SlotEffect<C, E, L>>>(effects: T) -> Self {
-        Self(effects.into_iter().collect())
+        let mut batch = Self::default();
+        batch.extend(effects);
+        batch
     }
 }
 
 impl<C, E, L> Default for SlotEffectBatch<C, E, L> {
     fn default() -> Self {
-        Self(Vec::new())
+        Self(EffectStorage::Empty)
     }
 }
 
 impl<C, E, L> Add for SlotEffectBatch<C, E, L> {
     type Output = Self;
 
-    fn add(mut self, mut rhs: Self) -> Self::Output {
-        self.0.append(&mut rhs.0);
+    fn add(mut self, rhs: Self) -> Self::Output {
+        rhs.for_each(|effect| self.push(effect));
         self
     }
 }
