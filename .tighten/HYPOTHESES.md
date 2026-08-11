@@ -42,10 +42,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   load-bearing in directory/runtime before touching; likely semantic, keep if so.
 
 ## P3 — machinery/dependency research (benchmark-gated)
-- H13 SlotEffectBatch → smallvec SmallVec<[SlotEffect;1]>? Requires: no_std? (entity is std — ok),
+- H13 SlotEffectBatch: REVERTED (E16) — 5-9% bench regression; see DEAD_ENDS. → smallvec SmallVec<[SlotEffect;1]>? Requires: no_std? (entity is std — ok),
   MSRV 1.96, license, bench parity on lifecycle benches + directory hot key. Reject explicitly if
   parity fails. Note contract: dependency must reduce total burden, not just move lines.
-- H14 runtime Completion → oneshot channel (tokio already in tree). Verify wake semantics +
+- H14 runtime Completion: REJECTED at analysis — see DEAD_ENDS. → oneshot channel (tokio already in tree). Verify wake semantics +
   cancel-on-drop parity with runtime.rs tests.
 - H15 driver TurnCompletion: KEPT (E15). notify_all → notify_one (unique waiter per receipt). Trivial, loom-gated.
 - H16 dashmap vs sharded std Mutex<HashMap>: contended bench (190ms baseline) is the decider.

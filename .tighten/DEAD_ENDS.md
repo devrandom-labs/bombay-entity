@@ -17,3 +17,17 @@ DispatchState, so the None window is observable only by the owner that moved
 the affine machine out. Option<M> is the canonical Rust encoding of state
 temporarily moved out of shared storage; renaming to an enum adds names
 without removing states or expect paths. No experiment run.
+
+## H14 Completion -> oneshot channel (rejected at analysis, 2026-08-11)
+DispatchWait::drop must distinguish result-consumed from result-pending to
+decide cancel_waiter. tokio/futures oneshot receivers cannot report "consumed"
+after poll-to-Ready, so the state E06 removed would have to be re-added as a
+wrapper. Entity core is deliberately runtime-free (tests use std threads); a
+tokio/futures dependency adds burden and removes nothing.
+
+## H13 SlotEffectBatch -> smallvec (rejected by benchmark, 2026-08-11)
+SmallVec<[SlotEffect;1]> replaces Empty/One/Many machinery but carries an
+explicit capacity field, growing the per-decision Decision move. Reproducible
+min-of-7 regressions: activating_hot_key +5.9%, active_hot_key +8.9%,
+independent_keys +9.0% (two runs). The hand-rolled enum is smaller and faster;
+the custom machinery stays. Reverted.
