@@ -33,12 +33,12 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
 ## P2 — sentinel/duplication removal
 - H08 DirectoryOutput: KEPT (E09)..dispatch_id Option → split DispatchOutput vs CallbackOutput types; deletes
   runtime.rs:222 expect. Falsifier: any callback path needs a dispatch id.
-- H09 executor `machine: Option<M>` mid-step sentinel → StepInProgress-style encoding; deletes
+- H09 executor: REJECTED at analysis — see DEAD_ENDS. `machine: Option<M>` mid-step sentinel → StepInProgress-style encoding; deletes
   "executor machine missing" expects (driver:219, :305). Check reentrancy semantics first.
 - H10 Choice=Routed alias removal (transition machine.rs:292) — single name; document migration.
 - H11 LifecycleModel newtype vs direct Topology use (machine.rs:222) — keep only if it carries
   validation evidence; else fold. Probe consumers first.
-- H12 TransitionEvidence SelfLoop vs Ignored (machine.rs:150) — probe whether the distinction is
+- H12 TransitionEvidence: REJECTED by contract — evidence taxonomy is finalized. SelfLoop vs Ignored (machine.rs:150) — probe whether the distinction is
   load-bearing in directory/runtime before touching; likely semantic, keep if so.
 
 ## P3 — machinery/dependency research (benchmark-gated)

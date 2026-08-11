@@ -32,8 +32,8 @@ extern crate alloc;
 mod machine;
 
 pub use machine::{
-    Base, Choice, Compose, Either, Machine, Product, Routed, Structure, Then, Topology,
-    TopologyError, Transition, TriggerId, ValidatedTopology, Vertex, VertexId,
+    Base, Compose, Either, Machine, Product, Routed, Structure, Then, Topology, TopologyError,
+    Transition, TriggerId, ValidatedTopology, Vertex, VertexId,
 };
 
 /// The value produced by one deterministic reduction.

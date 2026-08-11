@@ -337,9 +337,6 @@ pub enum Either<L, R> {
 /// Sum composition routing each alternative to its corresponding machine.
 pub struct Routed<A, B>(A, B);
 
-/// Compatibility name for [`Routed`].
-pub type Choice<A, B> = Routed<A, B>;
-
 impl<A, B> Machine for Routed<A, B>
 where
     A: Machine,
