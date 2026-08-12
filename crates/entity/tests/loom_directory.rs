@@ -82,30 +82,16 @@ fn fence_follows_every_admitted_delivery_resolution() {
     });
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Binding {
-    slot: usize,
-    activation: usize,
-}
-
 #[test]
 fn delayed_removal_cannot_remove_a_replacement_binding() {
     loom::model(|| {
-        let binding = Arc::new(Mutex::new(Some(Binding {
-            slot: 1,
-            activation: 1,
-        })));
+        let binding = Arc::new(Mutex::new(Some(1_usize)));
         let removal = {
             let binding = Arc::clone(&binding);
             thread::spawn(move || {
                 thread::yield_now();
                 let mut current = binding.lock().unwrap();
-                if *current
-                    == Some(Binding {
-                        slot: 1,
-                        activation: 1,
-                    })
-                {
+                if *current == Some(1) {
                     *current = None;
                 }
             })
@@ -113,21 +99,12 @@ fn delayed_removal_cannot_remove_a_replacement_binding() {
         let replacement = {
             let binding = Arc::clone(&binding);
             thread::spawn(move || {
-                *binding.lock().unwrap() = Some(Binding {
-                    slot: 2,
-                    activation: 2,
-                });
+                *binding.lock().unwrap() = Some(2);
             })
         };
         removal.join().unwrap();
         replacement.join().unwrap();
-        assert_eq!(
-            *binding.lock().unwrap(),
-            Some(Binding {
-                slot: 2,
-                activation: 2,
-            })
-        );
+        assert_eq!(*binding.lock().unwrap(), Some(2));
     });
 }
 

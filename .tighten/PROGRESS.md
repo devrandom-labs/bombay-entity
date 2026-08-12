@@ -148,3 +148,7 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   later valid witness dispatch before proving only that witness was delivered. Five isolated
   repetitions, all runtime tests, and Clippy green. The isolated target avoided interference from
   an unrelated concurrent Cargo build in the shared target directory.
+- E37 kept: the delayed-removal abstract Loom model encoded the obsolete `(slot, activation)`
+  conjunction. It now isolates pointer identity, while separate stale-activation and stale-
+  termination regressions prove ActivationId authority. Invariant 8 was split accordingly; targeted
+  tests and Clippy green.

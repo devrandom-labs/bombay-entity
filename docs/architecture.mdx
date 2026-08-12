@@ -423,8 +423,8 @@ locks.
 6. Graceful retirement begins only after fence acknowledgement.
 7. Forced retirement is separately classified and makes no false completion
    claim.
-8. Only matching slot identity and activation ID may transition or remove an
-   entry.
+8. Only matching activation identity may change exact-incarnation lifecycle
+   state, and only matching slot pointer identity may remove a map entry.
 9. Caller cancellation cannot cancel shared activation or strand slot state.
 10. Application, actor, telemetry, clock, and policy code never run under
     directory locks.

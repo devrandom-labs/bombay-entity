@@ -136,3 +136,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   appears beside the witness command, or the witness cannot complete. Measurement: repeated
   targeted test plus all runtime tests. Rollback:
   test-and-ledger commit.
+- H39 removal-model authority: KEPT (E37). Threatened invariant: each regression model proves one
+  implemented authority rather than a stronger obsolete conjunction. Workload: delayed removal
+  racing replacement. Change: make the abstract Loom binding model compare captured slot identity
+  only and correct invariant 8; exact ActivationId rejection remains independently covered by stale
+  lifecycle/directory tests. Falsifier: replacement slot can be removed, or no independent stale-ID
+  regression exists. Measurement: targeted Loom protocol model plus stale activation/termination
+  tests. Rollback: test-documentation-and-ledger commit.
