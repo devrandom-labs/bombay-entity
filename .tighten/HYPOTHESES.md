@@ -226,3 +226,11 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   the public `Passivation::Superseded` branch. Falsifier: the call reports `Begun`, drains the
   replacement, deadlocks, or the race cannot be deterministically reproduced. Measurement: exact
   repeated test, runtime suite, Clippy, and full gate. Rollback: test-and-ledger commit.
+- H50 fence-failure runtime mapping: KEPT (E48). Threatened invariant: forced retirement must
+  honestly preserve whether an ordered fence failed before enqueue or while awaiting
+  acknowledgement. Workload: activate, begin passivation, inject each `FenceFailure`, and observe
+  the exact `RetirementMode` delivered to the runtime port. Change: record retirement modes in the
+  runtime test double and cover both mappings. Falsifier: either stage collapses, the outstanding
+  count is nonzero, graceful retirement occurs, or the task fails to complete. Measurement: exact
+  runtime test, runtime suite, mapping mutation, Clippy, and full gate. Rollback: test-and-ledger
+  commit.

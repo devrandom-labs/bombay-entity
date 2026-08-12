@@ -8,8 +8,8 @@ use std::thread;
 use std::time::Duration;
 
 use bombay_entity::{
-    Activated, ActivationId, DirectoryConfig, DispatchFailure, EntityId, EntityRuntime,
-    FenceFailure, LocalEntityRuntime, Passivation, Refusal, RetirementMode,
+    Activated, ActivationId, DirectoryConfig, DispatchFailure, DrainFailure, DrainStage, EntityId,
+    EntityRuntime, FenceFailure, LocalEntityRuntime, Passivation, Refusal, RetirementMode,
 };
 
 struct ThreadWake(thread::Thread);
@@ -45,8 +45,10 @@ struct TestRuntimeState {
     activation_gate: Mutex<Option<Arc<ActivationGate>>>,
     delivery_gate: Mutex<Option<Arc<ActivationGate>>>,
     fence_gate: Mutex<Option<Arc<ActivationGate>>>,
+    fence_failure: Mutex<Option<FenceFailure>>,
     fences: AtomicUsize,
     retirements: AtomicUsize,
+    retirement_modes: Mutex<Vec<RetirementMode>>,
 }
 
 impl TestRuntime {
@@ -60,8 +62,10 @@ impl TestRuntime {
                 activation_gate: Mutex::new(None),
                 delivery_gate: Mutex::new(None),
                 fence_gate: Mutex::new(None),
+                fence_failure: Mutex::new(None),
                 fences: AtomicUsize::new(0),
                 retirements: AtomicUsize::new(0),
+                retirement_modes: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -114,10 +118,14 @@ impl<I: Send + 'static> LocalEntityRuntime<I, u64> for TestRuntime {
             gate.wait().await;
         }
         self.state.fences.fetch_add(1, Ordering::Relaxed);
-        Ok(())
+        match *self.state.fence_failure.lock().unwrap() {
+            Some(failure) => Err(failure),
+            None => Ok(()),
+        }
     }
 
-    async fn retire(&self, _: Self::Lease, _: RetirementMode) {
+    async fn retire(&self, _: Self::Lease, retirement: RetirementMode) {
+        self.state.retirement_modes.lock().unwrap().push(retirement);
         self.state.retirements.fetch_add(1, Ordering::Release);
     }
 }
@@ -444,4 +452,43 @@ fn passivation_fences_and_retires_the_exact_incarnation() {
     assert_eq!(observations.state.fences.load(Ordering::Relaxed), 1);
     assert_eq!(observations.state.retirements.load(Ordering::Relaxed), 1);
     assert_eq!(observations.state.activations.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn fence_failures_preserve_the_forced_retirement_stage() {
+    for (failure, stage) in [
+        (FenceFailure::Enqueue, DrainStage::FenceEnqueue),
+        (
+            FenceFailure::Acknowledgement,
+            DrainStage::FenceAcknowledgement,
+        ),
+    ] {
+        let actor_runtime = TestRuntime::new();
+        let observations = actor_runtime.clone();
+        *actor_runtime.state.fence_failure.lock().unwrap() = Some(failure);
+        let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime).unwrap();
+        let entity_id = EntityId::new(10);
+        block_on(entities.dispatch(entity_id, 1)).unwrap();
+
+        assert_eq!(entities.passivate(&entity_id), Passivation::Begun);
+        for _ in 0..1_000 {
+            if observations.state.retirements.load(Ordering::Acquire) != 0 {
+                break;
+            }
+            thread::yield_now();
+        }
+
+        assert_eq!(
+            observations
+                .state
+                .retirement_modes
+                .lock()
+                .unwrap()
+                .as_slice(),
+            [RetirementMode::Forced(DrainFailure {
+                stage,
+                outstanding_reservations: 0,
+            })]
+        );
+    }
 }

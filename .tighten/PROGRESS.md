@@ -261,3 +261,8 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   resumes the stale drain request, and proves `Superseded` without draining the
   replacement. Five exact runs, all eight runtime tests, strict entity Clippy,
   and an effective classification mutation are green. Clean counter reset to 0.
+- The continued runtime-port matrix found neither `FenceFailure` was exercised
+  through `EntityRuntime`. E48 records the retirement mode and proves enqueue
+  and acknowledgement failures preserve their distinct forced-drain stages;
+  collapsing the mapping is killed. All nine runtime tests and strict entity
+  Clippy are green. Clean counter remains 0.
