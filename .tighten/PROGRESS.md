@@ -80,3 +80,9 @@ Adversary2 found 10 items; all handled:
   gate once per convergence round.
 - Audit counter: round 1 found 8, round 2 found 10 — fixed-point requires two consecutive
   clean fresh audits; audit 3 spawned.
+
+## Convergence round 3 (2026-08-11)
+Adversary3 verdict: correct — no HARD findings. Three P3s handled in E29 (bab167e+d401122):
+doc overclaim on DispatchId forging, stale dual-removal doc clause, and a new pinned invariant
+(ignored inputs emit only cleanup effects; the assertion surfaced sanctioned Retire-under-Ignored).
+Audit counter: round 3 = clean #1 (P3-only). Round 4 spawned as clean #2 candidate.
