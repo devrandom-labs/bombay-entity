@@ -4,7 +4,7 @@ Concrete items only: file path + one-line acceptance criterion. Take the top ope
 
 ## Open
 
-1. **Evidence-classification pin** — `crates/entity/src/lifecycle/machine.rs` (`check_trace`):
+1. ~~Evidence-classification pin~~ DONE — `crates/entity/src/lifecycle/machine.rs` (`check_trace`):
    extend the bounded-trace assertions so `Traversed` evidence implies the phase actually
    changed and `SelfLoop`/`Ignored` imply it did not. Acceptance: assertion fails if the
    `handles()` classification and reducer behavior diverge on phase change.
