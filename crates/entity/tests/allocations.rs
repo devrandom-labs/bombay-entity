@@ -110,9 +110,11 @@ fn active_dispatch_stays_under_allocation_ceiling() {
     };
 
     // Exclude platform-dependent lazy initialization from the steady-state
-    // measurement while exercising the exact same active dispatch path.
-    let output = directory.dispatch(entity_id, usize::MAX).unwrap().output;
-    directory.interpret(output, &interpreter);
+    // measurement with an equal-sized exercise of the exact same active path.
+    for command in 0..ITERATIONS {
+        let output = directory.dispatch(entity_id, command).unwrap().output;
+        directory.interpret(output, &interpreter);
+    }
 
     let before = dhat::HeapStats::get();
     for command in 0..ITERATIONS {
