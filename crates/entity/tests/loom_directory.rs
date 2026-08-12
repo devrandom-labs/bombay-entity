@@ -82,30 +82,16 @@ fn fence_follows_every_admitted_delivery_resolution() {
     });
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Binding {
-    slot: usize,
-    activation: usize,
-}
-
 #[test]
 fn delayed_removal_cannot_remove_a_replacement_binding() {
     loom::model(|| {
-        let binding = Arc::new(Mutex::new(Some(Binding {
-            slot: 1,
-            activation: 1,
-        })));
+        let binding = Arc::new(Mutex::new(Some(1_usize)));
         let removal = {
             let binding = Arc::clone(&binding);
             thread::spawn(move || {
                 thread::yield_now();
                 let mut current = binding.lock().unwrap();
-                if *current
-                    == Some(Binding {
-                        slot: 1,
-                        activation: 1,
-                    })
-                {
+                if *current == Some(1) {
                     *current = None;
                 }
             })
@@ -113,21 +99,12 @@ fn delayed_removal_cannot_remove_a_replacement_binding() {
         let replacement = {
             let binding = Arc::clone(&binding);
             thread::spawn(move || {
-                *binding.lock().unwrap() = Some(Binding {
-                    slot: 2,
-                    activation: 2,
-                });
+                *binding.lock().unwrap() = Some(2);
             })
         };
         removal.join().unwrap();
         replacement.join().unwrap();
-        assert_eq!(
-            *binding.lock().unwrap(),
-            Some(Binding {
-                slot: 2,
-                activation: 2,
-            })
-        );
+        assert_eq!(*binding.lock().unwrap(), Some(2));
     });
 }
 
@@ -157,5 +134,58 @@ fn canceled_waiter_and_activation_completion_drop_command_once() {
         cancel.join().unwrap();
         activation.join().unwrap();
         assert_eq!(drops.load(Ordering::Relaxed), 1);
+    });
+}
+
+fn try_deliver(admission: &Arc<Mutex<Admission>>) -> bool {
+    let admitted = {
+        let mut state = admission.lock().unwrap();
+        if state.closed {
+            false
+        } else {
+            state.reservations += 1;
+            true
+        }
+    };
+    if admitted {
+        thread::yield_now();
+        let mut state = admission.lock().unwrap();
+        state.reservations -= 1;
+        if state.closed && state.reservations == 0 {
+            state.fence_enqueued = true;
+        }
+    }
+    admitted
+}
+
+#[test]
+fn reservations_racing_drain_close_resolve_before_the_fence() {
+    loom::model(|| {
+        let admission = Arc::new(Mutex::new(Admission::default()));
+        let first = {
+            let admission = Arc::clone(&admission);
+            thread::spawn(move || try_deliver(&admission))
+        };
+        let second = {
+            let admission = Arc::clone(&admission);
+            thread::spawn(move || try_deliver(&admission))
+        };
+        let drain = {
+            let admission = Arc::clone(&admission);
+            thread::spawn(move || {
+                let mut state = admission.lock().unwrap();
+                state.closed = true;
+                if state.reservations == 0 {
+                    state.fence_enqueued = true;
+                }
+            })
+        };
+        first.join().unwrap();
+        second.join().unwrap();
+        drain.join().unwrap();
+        let state = admission.lock().unwrap();
+        assert!(state.closed);
+        assert_eq!(state.reservations, 0);
+        assert!(state.fence_enqueued);
     });
 }

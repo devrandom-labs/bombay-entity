@@ -1,6 +1,6 @@
 [package]
 name = "bombay-entity"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,12 +12,21 @@ readme = "../../README.md"
 keywords = ["actor", "cqrs", "entity", "routing"]
 categories = ["concurrency"]
 
+[features]
+default = ["protocol"]
+protocol = ["dep:behavior"]
+
 [dependencies]
-behavior.workspace = true
+behavior = { workspace = true, optional = true }
 bombay-machine-executor.workspace = true
 bombay-transition.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+dhat = "0.3"
+loom = "0.7.2"
+
+[target.'cfg(loom)'.dependencies]
 loom = "0.7.2"
 
 [lints]
@@ -29,4 +38,8 @@ harness = false
 
 [[bench]]
 name = "directory"
+harness = false
+
+[[bench]]
+name = "exclusive_executor"
 harness = false
