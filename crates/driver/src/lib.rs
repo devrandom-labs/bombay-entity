@@ -283,10 +283,15 @@ where
 }
 
 struct LinearizedExecution<M, O, E> {
-    machine: Option<M>,
+    machine: LinearizedMachine<M>,
     outputs: VecDeque<O>,
     evidence: Option<E>,
     dispatch: DispatchState,
+}
+
+enum LinearizedMachine<M> {
+    Ready(M),
+    Poisoned,
 }
 
 /// Ownership phase of output dispatch.
@@ -308,7 +313,7 @@ where
     pub fn new(machine: M) -> Self {
         Self {
             execution: Mutex::new(LinearizedExecution {
-                machine: Some(machine),
+                machine: LinearizedMachine::Ready(machine),
                 outputs: VecDeque::new(),
                 evidence: None,
                 dispatch: DispatchState::Idle,
@@ -324,11 +329,15 @@ where
     /// the affine machine state.
     pub fn submit(&self, input: M::Input) -> <M::Output as OutputEvidence>::Evidence {
         let mut execution = self.execution.lock().expect("executor lock poisoned");
-        let machine = execution.machine.take().expect("executor machine missing");
+        let LinearizedMachine::Ready(machine) =
+            core::mem::replace(&mut execution.machine, LinearizedMachine::Poisoned)
+        else {
+            panic!("executor machine poisoned");
+        };
         let (output, successor) = machine.step(input);
         let evidence = output.evidence();
         execution.evidence = Some(evidence.clone());
-        execution.machine = Some(successor);
+        execution.machine = LinearizedMachine::Ready(successor);
         execution.outputs.push_back(output);
         evidence
     }
