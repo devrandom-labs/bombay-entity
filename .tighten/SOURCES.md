@@ -1,5 +1,16 @@
 # Research Sources
 
+## Reopened verification research (2026-08-12)
+- Rust Miri upstream README, Fenix-locked revision d17fa5c004217ac6e51da9a8c2d2b79b0ed37109,
+  accessed 2026-08-12. Miri requires a matching nightly `cargo`, `rustc`,
+  `rust-src`, and `miri` component; `cargo miri test` is the supported entry
+  point. Applicability: crate-owned library tests. Limitation: Miri samples
+  thread schedules and complements rather than replaces Loom.
+- Crane custom-command documentation and locked Crane revision
+  2c71e194474d13de031d729b729c968ddbe3507f, accessed 2026-08-12.
+  `mkCargoDerivation` supplies vendored/offline Cargo configuration for a custom
+  `cargo miri` invocation.
+
 Every entry needs: URL, version/commit, access date, applicability, limitations. No blog posts as
 primary evidence. Entries are added when consulted, not anticipated.
 

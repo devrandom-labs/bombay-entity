@@ -31,7 +31,14 @@
           file = ./rust-toolchain.toml;
           sha256 = "sha256-mvUGEOHYJpn3ikC5hckneuGixaC+yGrkMM/liDIDgoU=";
         };
+        miriToolchain = fenix.packages.${system}.combine [
+          fenix.packages.${system}.latest.cargo
+          fenix.packages.${system}.latest.rustc
+          fenix.packages.${system}.latest.rust-src
+          fenix.packages.${system}.latest.miri
+        ];
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+        miriCraneLib = (crane.mkLib pkgs).overrideToolchain miriToolchain;
         src = pkgs.lib.cleanSource ./.;
         commonArgs = {
           inherit src;
@@ -40,6 +47,26 @@
           strictDeps = true;
         };
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        miriVendorDir = miriCraneLib.vendorMultipleCargoDeps {
+          cargoLockList = [
+            ./Cargo.lock
+            "${miriToolchain}/lib/rustlib/src/rust/library/Cargo.lock"
+          ];
+        };
+        miriCheck = miriCraneLib.mkCargoDerivation (
+          commonArgs
+          // {
+            cargoArtifacts = null;
+            cargoVendorDir = miriVendorDir;
+            pnameSuffix = "-miri";
+            doInstallCargoArtifacts = false;
+            buildPhaseCargoCommand = ''
+              export MIRI_SYSROOT="$TMPDIR/miri-sysroot"
+              cargo miri setup
+              cargo miri test --workspace --lib --locked
+            '';
+          }
+        );
       in
       {
         checks = {
@@ -61,6 +88,16 @@
               cargoExtraArgs = "-p bombay-machine-executor --lib";
             }
           );
+          entity-directory-loom = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              RUSTFLAGS = "--cfg loom";
+              cargoExtraArgs = "-p bombay-entity --no-default-features";
+              cargoTestExtraArgs = "--test loom_local_directory";
+            }
+          );
+          entity-miri = miriCheck;
           entity-doctest = craneLib.cargoDocTest (commonArgs // { inherit cargoArtifacts; });
           entity-coverage = craneLib.cargoLlvmCov (
             commonArgs

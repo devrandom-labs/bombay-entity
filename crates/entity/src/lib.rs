@@ -26,6 +26,7 @@ use core::hash::Hash;
 
 mod directory;
 mod lifecycle;
+#[cfg(feature = "protocol")]
 mod protocol;
 mod runtime;
 
@@ -41,6 +42,7 @@ pub use lifecycle::{
     SlotDecision, SlotEffect, SlotEffectBatch, SlotEvent, SlotReducer, TransitionEvidence,
     lifecycle_machine, validate_lifecycle_topology,
 };
+#[cfg(feature = "protocol")]
 pub use protocol::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
 pub use runtime::{
     Activated, DispatchFailure, EntityRuntime, FenceFailure, LocalEntityRuntime, Passivation,

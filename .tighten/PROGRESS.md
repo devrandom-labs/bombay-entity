@@ -404,3 +404,34 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - The implementation-tightening loop is complete. Reopen only for a new contract,
   changed dependency/toolchain evidence, a reproducible counterexample, or a new
   representative benchmark that invalidates a retained decision.
+
+## Operator-requested verification reopening (post-E51)
+- E52 adds an isolated, reproducible nightly Miri check while every shipped and
+  ordinary verification target remains on stable Rust 1.96. Miri passes 27
+  interpreted library tests with leak detection enabled; native verification
+  retains the computationally exhaustive and synthetic-static-fixture tests.
+- E53 supersedes the real-directory Loom dead end. The actor protocol adapter is
+  now a default optional feature, allowing a core-only model to drive the actual
+  `LocalDirectory`, shard mutex, slot executor, identity allocation, activation
+  commitment, and delivery effects. All schedules produce one activation and
+  deliver all three commands.
+- E54 replaces the linearized executor's unexplained `Option<M>` sentinel with
+  `LinearizedMachine::Ready(M) | Poisoned`. The serialized executor's option is
+  retained because its drain guard genuinely owns the affine machine outside
+  shared storage; replacing it would rename rather than remove that state.
+- Fresh directory/lifecycle minima are 50.12/98.83/11.03/182.64/26.58 and
+  9.87/15.42 ms. All remain within or better than retained evidence. Strict
+  Clippy, seven driver tests, two real-executor Loom models, the real-directory
+  Loom model, and nightly Miri are green. Full combined gate follows.
+
+## Reopened verification pass complete (2026-08-12)
+- `plugins/bombay-tighten-loop/scripts/check.sh` is green with score 994570.
+  All eleven built checks plus the cached RustSec audit pass: stable release
+  build, fmt, strict all-target Clippy, 66/66 nextest, doctest, docs, 93.2%
+  coverage floor, cargo-deny, two real-executor Loom models, the real-directory
+  Loom model, and the isolated nightly Miri suite.
+- The requested limitations are closed. Default public compatibility is
+  preserved; core-only consumers gain an opt-out from the protocol adapter.
+  The sole retained machine option represents real affine ownership outside the
+  mutex and is not an invalid state. No further corrective hypothesis remains
+  from this reopening.

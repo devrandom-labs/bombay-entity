@@ -97,6 +97,38 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   crosses the finalized SlotEffect/RetirementMode algebra — recorded in DEAD_ENDS, not actionable.
 
 ## Endless-loop evidence follow-ups (2026-08-12)
+- H54 pinned nightly Miri gate: STARTED (E52). Threatened invariant: stable-only
+  verification cannot detect interpreter-visible undefined behavior or invalid
+  aliasing in crate-owned machinery. Workload: all three crates' library tests;
+  stable remains the sole toolchain for build, Clippy, tests, docs, coverage,
+  audit, and benchmarks. Change: compose the Fenix-locked latest nightly cargo,
+  rustc, rust-src, and Miri components into a separate Crane derivation and run
+  `cargo miri test --workspace --lib`. Falsifier: nightly affects an existing
+  check, the derivation is not reproducible/offline, Miri needs exclusions that
+  hide crate-owned code, or any interpreted test fails. Measurement: separate
+  Nix check plus the unchanged stable full gate. Rollback: flake, docs, and ledger
+  commit only.
+- H55 real-directory Loom instrumentation: STARTED (E53). Threatened invariant:
+  abstract protocol models can drift from `LocalDirectory` lock, slot, and
+  executor code. Workload: two first dispatches racing for one absent entity and
+  exact activation completion. Change: make the actor protocol adapter a default
+  optional feature so a core-only `cfg(loom)` build avoids the unrelated async
+  mailbox dependency; swap directory synchronization imports to Loom under that
+  cfg and execute the real directory in the model. Falsifier: default API/build
+  changes, production synchronization changes, the real model cannot compile,
+  more than one activation starts, command ownership is lost, or the state does
+  not become active. Measurement: exact Loom check, default all-target Clippy,
+  and full stable gate. Rollback: feature, cfg imports, model, flake, and ledger
+  commit.
+- H56 linearized machine sentinel: STARTED (E54). Threatened invariant: the
+  linearized executor represents an unexplained `None` machine and enforces it
+  with `expect`, although its only legitimate absence is permanent transition
+  poison. Workload: submit, transition panic, later dispatch, and real-executor
+  Loom submit/dispatch interleavings. Change: replace `Option<M>` with the sum
+  `Ready(M) | Poisoned`, installing `Poisoned` before the consuming transition
+  and `Ready(successor)` afterward. Falsifier: panic/recovery behavior changes,
+  output/evidence ordering changes, Loom fails, or submit benchmark regresses
+  over 5%. Rollback: one driver implementation and ledger commit.
 - H33 coverage gate: KEPT (E31). Threatened invariant: verification coverage can regress while
   the ordinary test gate remains green. Workload: all workspace tests under source-based LLVM
   coverage. Change: make coverage a flake check at the measured 93.2% line floor and pin the

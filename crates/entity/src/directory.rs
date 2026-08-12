@@ -1,9 +1,15 @@
 //! Concurrent storage for local entity lifecycle machines.
 
+#[cfg(loom)]
+use loom::sync::atomic::{AtomicU64, Ordering};
+#[cfg(loom)]
+use loom::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, RandomState};
 use std::num::{NonZeroU64, NonZeroUsize};
+#[cfg(not(loom))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(loom))]
 use std::sync::{Arc, Mutex};
 
 use crate::{

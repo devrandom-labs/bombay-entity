@@ -12,14 +12,21 @@ readme = "../../README.md"
 keywords = ["actor", "cqrs", "entity", "routing"]
 categories = ["concurrency"]
 
+[features]
+default = ["protocol"]
+protocol = ["dep:behavior"]
+
 [dependencies]
-behavior.workspace = true
+behavior = { workspace = true, optional = true }
 bombay-machine-executor.workspace = true
 bombay-transition.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 dhat = "0.3"
+loom = "0.7.2"
+
+[target.'cfg(loom)'.dependencies]
 loom = "0.7.2"
 
 [lints]

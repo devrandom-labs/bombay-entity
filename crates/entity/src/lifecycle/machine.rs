@@ -657,6 +657,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "the negative fixture deliberately leaks a synthetic 'static topology slice"
+    )]
     fn topology_reopening_admission_from_drain_or_retirement_is_rejected() {
         for (from, to) in [
             (LifecyclePhase::Draining, LifecyclePhase::Active),
@@ -684,6 +688,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "native exhaustive enumeration covers 137,561 traces; Miri runs each reducer test"
+    )]
     fn bounded_event_traces_preserve_topology_evidence_and_structure() {
         enumerate(&mut Vec::new(), 4);
     }

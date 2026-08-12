@@ -76,5 +76,10 @@ only until bombay-behavior 0.9.1: it calls communication's Consumer::recv,
 which bombay-communication gates #[cfg(not(loom))]. Any RUSTFLAGS=--cfg loom
 build of bombay-entity therefore fails in an external crate. Prerequisite:
 bombay-behavior must become loom-aware (upstream repo). Until then the abstract
-models stay, with docs corrected to describe them as protocol models (not
+  models stay, with docs corrected to describe them as protocol models (not
 directory models). All edits reverted.
+
+Superseded 2026-08-12 by E53: the actor protocol adapter is now a default
+optional feature. A core-only `cfg(loom)` build does not compile the unrelated
+upstream mailbox stack, so the real directory, slot executor, and synchronization
+types are model-checked without weakening the default API.

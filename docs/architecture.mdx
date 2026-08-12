@@ -444,8 +444,10 @@ checking declared-edge evidence and ignored-input cleanup effects.
 
 Five abstract Loom protocol models explore activation claim, delivery/drain
 ordering, slot-replacement removal, admission racing, and
-cancellation/activation ownership interleavings, and two further non-panicking
-Loom models drive the real machine executors. Panic/poison behavior is exercised
+cancellation/activation ownership interleavings. A separate core-only model
+drives the real `LocalDirectory`, including its shard mutex, slot executor,
+identity allocation, activation commitment, and delivery effects. Two further
+non-panicking Loom models drive the real machine executors. Panic/poison behavior is exercised
 by deterministic real-executor regressions because unwinding through Loom's
 generator teardown can abort the verification process rather than report a
 modeled outcome.
@@ -455,11 +457,12 @@ there is no parser, unsafe code, or unconstrained input structure, and the pure
 finite transition alphabet is enumerated directly; Loom covers the concurrent
 nondeterminism that ordinary fuzzing would sample weakly.
 
-Miri is not available in the pinned Rust 1.96 Nix toolchain (`cargo miri`
-reports that no such command is installed). The implementation contains no
-`unsafe` blocks. The reproducible gates are workspace tests, strict all-target
-Clippy, the retained Loom and stress tests, both benchmarks, LLVM coverage, and
-all ten flake checks.
+Stable Rust 1.96 remains the production, test, lint, documentation, coverage,
+and benchmark toolchain. A separate Fenix-locked 2026-08-05 nightly runs Miri
+over all three crates' library suites with leak detection enabled. The native
+gate retains the 137,561-trace exhaustive test and the deliberately leaked
+synthetic `'static` topology fixture; Miri interprets the remaining 27 tests.
+The implementation contains no `unsafe` blocks.
 
 ## Research basis
 
