@@ -37,6 +37,17 @@ pub use machine::{
 };
 
 /// The value produced by one deterministic reduction.
+///
+/// A decision must be handled because discarding it also discards its
+/// successor state and effect description.
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use bombay_transition::Decision;
+///
+/// Decision { state: 1_u8, effects: () };
+/// ```
+#[must_use = "a reduction's successor state and effects must be handled"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Decision<S, F> {
     /// State to install after the reduction.
@@ -47,25 +58,21 @@ pub struct Decision<S, F> {
 
 impl<S, F> Decision<S, F> {
     /// Pair the next state with its effect description.
-    #[must_use]
     pub const fn new(state: S, effects: F) -> Self {
         Self { state, effects }
     }
 
     /// Transform only the effect description.
-    #[must_use]
     pub fn map_effects<G>(self, map: impl FnOnce(F) -> G) -> Decision<S, G> {
         Decision::new(self.state, map(self.effects))
     }
 
     /// Transform only the next state.
-    #[must_use]
     pub fn map_state<T>(self, map: impl FnOnce(S) -> T) -> Decision<T, F> {
         Decision::new(map(self.state), self.effects)
     }
 
     /// Transform the next state and effect description independently.
-    #[must_use]
     pub fn map<T, G>(
         self,
         state: impl FnOnce(S) -> T,

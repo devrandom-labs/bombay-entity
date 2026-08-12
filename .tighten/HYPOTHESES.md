@@ -169,3 +169,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   surface, not deleted internally. Falsifier: any current implementation claim still identifies
   `std::collections::HashMap`, generated docs fail, or history is rewritten rather than qualified.
   Measurement: source-first search plus workspace docs. Rollback: documentation-only commit.
+- H43 transition decision consumption: KEPT (E41). Threatened invariant: every pure reduction's
+  successor state and effect description are installed or deliberately inspected. Workload: direct
+  calls through `Reducer::reduce`, including external reducers that bypass `Decision::new` at the
+  call site. Change: mark the `Decision` type itself `must_use`; representation and behavior remain
+  unchanged. Falsifier: the annotation changes code generation, introduces workspace warnings, or
+  cannot warn on a discarded direct reducer result. Measurement: a rustc warning probe, workspace
+  tests, and all-target Clippy. Rollback: one annotation/test-evidence commit.

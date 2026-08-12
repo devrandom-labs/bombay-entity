@@ -126,6 +126,8 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   Loom, doctests, docs, audit, deny, and the 93.2% coverage floor.
 - E40 opened after the next source-first pass found residual standard-library
   `HashMap` wording and ambiguous removed-vs-unexported historical wording.
+- E41 made `Decision<S, F>` itself `must_use`, closing the direct `Reducer::reduce`
+  discard seam; an exact compile-fail doctest proves the warning contract.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 
