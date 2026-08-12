@@ -65,3 +65,18 @@ P2 sentinels: H08 (DirectoryOutput.dispatch_id Option split), H09 (machine: Opti
 - Public surface: LifecycleModel/lifecycle_model, Choice, ActivationWaiter/DrainProgress/
   ReservationCount removed; DispatchOutput/Passivation/DispatchOutcome added as honest types.
 - Performance: repeated-harness A/B in E24 entry; hot paths at parity, stale callbacks -70%.
+
+## Convergence round 2 (2026-08-11)
+Adversary2 found 10 items; all handled:
+- E25 744ab3c fix(lifecycle): late failed deliveries dropped in Retiring/Inactive/Activating
+  violated delivered-or-returned ownership; both falsifier tests verified against pre-fix code.
+- E26 BLOCKED-UPSTREAM: real-SUT entity loom models need bombay-behavior loom-awareness
+  (communication gates recv cfg(not(loom))); swap reverted, dead end recorded, docs corrected.
+- E27 3fc79e5: DispatchId hardening, DrainProgress NonZeroUsize, DuplicateTransition message,
+  validator admission-reopening coverage (all four edge shapes, falsifier test).
+- E28 c822663: docs aligned (diagrams, FenceFailure, DrainPolicy/telemetry forward-looking,
+  verification counts, spawn run-to-completion, submit handler substitution).
+- Operator guidance: full nix gate is expensive — use cargo directly (direnv) per experiment,
+  gate once per convergence round.
+- Audit counter: round 1 found 8, round 2 found 10 — fixed-point requires two consecutive
+  clean fresh audits; audit 3 spawned.
