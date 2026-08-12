@@ -146,6 +146,15 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - E43 pins the untested `with_hasher` collision seam introduced by E39: two
   constant-hash IDs retain distinct activations/deliveries, exact removal
   deletes only its captured slot, and an equality-blind mutation is killed.
+
+## Fresh audit round 3 (post-E43, clean #1)
+- Clean dependency/allocation pass: no duplicate normal dependencies;
+  `hashbrown` resolves once with only `inline-more,raw-entry`; workspace package
+  metadata retains Rust 1.96 and MIT OR Apache-2.0.
+- The retained dhat regression observes exactly 0 blocks and 0 bytes across
+  10,000 active dispatch-and-resolution operations on the E43 tree.
+- No feature, dependency, allocation, or evidence-ledger mismatch was found.
+  Clean counter: 1. A different whole-workspace lens is required next.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 
