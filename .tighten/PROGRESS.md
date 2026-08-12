@@ -175,6 +175,17 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   build left build scripts sleeping; only this session's processes were stopped.
 - Clean counter: 1. Full native Nix docs/doctests/runtime coverage remains a
   mandatory convergence gate rather than inferred from this audit.
+
+## Fresh audit round 5 (post-E45, clean #2)
+- Clean minimality/performance pass across every production clone/allocation,
+  custom collection, public/internal representation, dependency, allow-list,
+  and retained rejected alternative. No actionable simplification or
+  unsupported performance claim found.
+- `SharedBuildHasher`'s one construction-time Arc preserves arbitrary non-Clone
+  `BuildHasher` support; active dispatch remains allocation-free; endpoint,
+  entity-ID, and waker clones cross documented ownership boundaries.
+- Consecutive clean counter: 2. This is a convergence candidate only; a fresh
+  adversarial pass, final benchmarks, and the complete native Nix gate remain.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 
