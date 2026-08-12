@@ -306,3 +306,18 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - No untested actionable high-value hypothesis emerged. Consecutive clean
   counter: 1. The next pass uses a fresh public-contract and failure-surface
   lens.
+
+## Fresh audit round 8 (post-E50, clean #2)
+- Re-read every exported type, constructor, operation, error, panic contract,
+  lifecycle invariant, and README/architecture guarantee against its current
+  implementation and direct verification. The public surface still exposes no
+  provisional actor capability, hidden retry promise, or stale-generation
+  authority; command and lease ownership claims match all success/failure paths.
+- All four typed-error integration tests, the `Decision` compile-fail doctest,
+  workspace doctests, and workspace documentation with `-D warnings` are green.
+  An initial `cargo rustdoc --workspace` probe used an unsupported Cargo flag;
+  the supported `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps`
+  command supplied the intended evidence and passed.
+- No untested actionable high-value hypothesis emerged. Consecutive clean
+  counter: 2. This is only a convergence candidate; a separate final
+  adversarial falsification pass and complete native gate remain mandatory.
