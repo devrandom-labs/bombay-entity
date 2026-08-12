@@ -139,6 +139,11 @@ impl<C, E: Clone, L> Slot<C, E, L> {
 type Shard<I, C, E, L> = Mutex<HashMap<EntityId<I>, Arc<Slot<C, E, L>>>>;
 
 /// Sharded local storage for authoritative per-entity lifecycle machines.
+///
+/// Hashing and equality for [`EntityId`] keys may run while a shard lock is
+/// held as part of standard [`HashMap`] operations. Implementations of
+/// [`Hash`] and [`Eq`] for `I` must not reenter this directory. Lifecycle
+/// effect callbacks run only after directory synchronization is released.
 pub struct LocalDirectory<I, C, E, L, S = RandomState> {
     shards: Box<[Shard<I, C, E, L>]>,
     mask: u64,

@@ -152,3 +152,7 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   conjunction. It now isolates pointer identity, while separate stale-activation and stale-
   termination regressions prove ActivationId authority. Invariant 8 was split accordingly; targeted
   tests and Clippy green.
+- E38 kept: invariant 10 overclaimed that no application code runs under directory locks. Standard
+  HashMap lookup/insertion invokes user-defined EntityId Hash/Eq under the shard mutex; only effect
+  and runtime callbacks are guaranteed outside it. Public API and architecture now state the
+  non-reentrancy obligation; docs and Clippy green.

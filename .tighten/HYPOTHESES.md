@@ -143,3 +143,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   lifecycle/directory tests. Falsifier: replacement slot can be removed, or no independent stale-ID
   regression exists. Measurement: targeted Loom protocol model plus stale activation/termination
   tests. Rollback: test-documentation-and-ledger commit.
+- H40 shard-lock callback boundary: KEPT (E38). Threatened invariant: callers know exactly which
+  of their code may execute under a directory mutex. Workload: shard lookup/insertion/removal for a
+  user-defined `EntityId<I>`. Change: narrow invariant 10 to effect/runtime callbacks and document
+  that `I::Hash`/`I::Eq` execute inside `HashMap` operations under the shard lock and must not
+  reenter the directory. Falsifier: every Hash/Eq call occurs before lock acquisition, or an effect
+  interpreter callback runs with a shard guard live. Measurement: source lock-scope audit, docs,
+  Clippy. Rollback: documentation-and-ledger commit.

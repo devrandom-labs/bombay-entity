@@ -426,8 +426,10 @@ locks.
 8. Only matching activation identity may change exact-incarnation lifecycle
    state, and only matching slot pointer identity may remove a map entry.
 9. Caller cancellation cannot cancel shared activation or strand slot state.
-10. Application, actor, telemetry, clock, and policy code never run under
-    directory locks.
+10. Lifecycle effect interpretation and actor-runtime, telemetry, clock, and
+    policy callbacks never run under directory locks. User-defined `Hash` and
+    `Eq` for the entity identifier do execute inside shard `HashMap` operations
+    and must not reenter the same directory.
 
 ## Verification strategy
 
