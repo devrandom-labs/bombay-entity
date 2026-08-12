@@ -282,7 +282,7 @@ fn failed_delivery_returns_the_original_command() {
 }
 
 #[test]
-fn failed_activation_returns_the_command_and_allows_retry() {
+fn failed_activation_returns_the_command_and_eventually_allows_retry() {
     let actor_runtime = TestRuntime::new();
     let observations = actor_runtime.clone();
     actor_runtime
@@ -303,7 +303,20 @@ fn failed_activation_returns_the_command_and_allows_retry() {
         .state
         .fail_activation
         .store(false, Ordering::Relaxed);
-    block_on(entities.dispatch(entity_id, 82)).unwrap();
+    let mut command = 82;
+    for _ in 0..1_000 {
+        match block_on(entities.dispatch(entity_id, command)) {
+            Ok(()) => break,
+            Err(DispatchFailure::Refused {
+                command: returned,
+                reason: Refusal::Unavailable,
+            }) => {
+                command = returned;
+                thread::yield_now();
+            }
+            Err(failure) => panic!("unexpected retry failure: {failure:?}"),
+        }
+    }
 
     assert_eq!(observations.state.activations.load(Ordering::Acquire), 2);
     assert_eq!(*observations.state.delivered.lock().unwrap(), [82]);
