@@ -436,6 +436,7 @@ mod tests {
 
     use super::{
         LinearizedExecutor, OutputEvidence, OutputHandler, SerializedExecutor, TurnOutcome,
+        TurnReceipt,
     };
 
     const VERTICES: &[Vertex] = &[Vertex {
@@ -556,6 +557,46 @@ mod tests {
             panic!("poisoned executor accepted input")
         };
         assert_eq!(rejected.0, 2);
+    }
+
+    struct ReentrantPoisonHandler {
+        executor: Weak<SerializedExecutor<TestMachine>>,
+        queued: Mutex<Option<TurnReceipt>>,
+    }
+
+    impl OutputHandler<Output> for ReentrantPoisonHandler {
+        fn handle(&self, output: Output) {
+            if output.0 == 1 {
+                let receipt = self.executor.upgrade().unwrap().submit(2, self).unwrap();
+                *self.queued.lock().unwrap() = Some(receipt);
+                panic!("handler");
+            }
+        }
+    }
+
+    #[test]
+    fn serialized_handler_panic_resolves_queued_receipt_as_poisoned() {
+        fn transition(state: u8, input: u8) -> (Output, u8) {
+            (Output(input), state + input)
+        }
+        let executor = Arc::new(SerializedExecutor::new(Base::new(
+            0,
+            TOPOLOGY.validated().unwrap(),
+            transition as fn(u8, u8) -> (Output, u8),
+        )));
+        let handler = ReentrantPoisonHandler {
+            executor: Arc::downgrade(&executor),
+            queued: Mutex::new(None),
+        };
+
+        assert!(catch_unwind(AssertUnwindSafe(|| executor.submit(1, &handler))).is_err());
+        let queued = handler.queued.lock().unwrap().take().unwrap();
+        assert_eq!(queued.outcome(), Some(TurnOutcome::Poisoned));
+        assert_eq!(queued.wait(), TurnOutcome::Poisoned);
+        assert!(matches!(
+            executor.submit(3, &handler),
+            Err(super::PoisonedInput(3))
+        ));
     }
 
     impl super::OutputEvidence for usize {
@@ -731,40 +772,6 @@ mod loom_tests {
             assert!(matches!(
                 trace.as_slice(),
                 [10, 11, 20, 21] | [20, 21, 10, 11]
-            ));
-        });
-    }
-
-    #[test]
-    fn real_serialized_executor_poison_resolves_every_outstanding_receipt() {
-        loom::model(|| {
-            let machine = Base::new((), TOPOLOGY.validated().unwrap(), |(), input| (input, ()));
-            let executor = Arc::new(SerializedExecutor::new(machine));
-
-            let bystander = {
-                let executor = Arc::clone(&executor);
-                thread::spawn(move || {
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        // The drain owner's handler runs every queued turn, so
-                        // the panic on output 2 can surface in either thread.
-                        if let Ok(receipt) = executor.submit(1, &|output| assert_ne!(output, 2)) {
-                            let _ = receipt.wait();
-                        }
-                    }))
-                })
-            };
-            let _poison_panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if let Ok(receipt) = executor.submit(2, &|output| assert_ne!(output, 2)) {
-                    let _ = receipt.wait();
-                }
-            }));
-            let _ = bystander.join().unwrap();
-
-            // Output 2 is handled under every schedule, so the handler panic
-            // always poisons the executor; rejection proves it.
-            assert!(matches!(
-                executor.submit(3, &|_| {}),
-                Err(super::PoisonedInput(3))
             ));
         });
     }

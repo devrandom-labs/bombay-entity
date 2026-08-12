@@ -159,6 +159,11 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   alphabet omitted cancellation and several stale/failure ownership classes.
   It now explores 19 equivalence classes through depth four in 0.09s. Clean
   counter reset to 0.
+- The post-E44 synchronization pass found the intentional-panic serialized
+  executor Loom model can abort during Loom generator teardown, matching the
+  limitation already observed in E21. E45 moves queued-receipt poison proof to
+  a deterministic real-executor std regression and retains two non-panicking
+  real-SUT Loom models. Clean counter remains 0.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 

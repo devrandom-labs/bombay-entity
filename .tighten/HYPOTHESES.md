@@ -199,3 +199,12 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   command-return cleanup violates the ignored-effect constraint, or runtime grows impractically.
   Measurement: exact trace test duration, lifecycle suite, coverage, and Clippy. Rollback:
   test-and-ledger commit.
+- H47 poison verification determinism: KEPT (E45). Threatened invariant: a serialized handler
+  panic resolves the active and every queued receipt as poisoned without making the verification
+  process itself abort. Workload: reentrant submission queues a second receipt during the first
+  handler, then that handler panics. Change: replace the intentional-panic Loom model (which can
+  abort in generator teardown) with a deterministic real-executor std regression; retain the two
+  non-panicking real-SUT Loom models. Falsifier: the queued receipt is unresolved/non-poisoned,
+  later input is accepted, the std regression does not kill a drain-cleanup mutation, or either
+  retained Loom model fails. Measurement: repeated exact std test, cfg-Loom suite, full gate.
+  Rollback: test/documentation/ledger commit.

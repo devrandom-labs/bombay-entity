@@ -444,8 +444,11 @@ checking declared-edge evidence and ignored-input cleanup effects.
 
 Five abstract Loom protocol models explore activation claim, delivery/drain
 ordering, slot-replacement removal, admission racing, and
-cancellation/activation ownership interleavings, and three further Loom models
-drive the real machine executors.
+cancellation/activation ownership interleavings, and two further non-panicking
+Loom models drive the real machine executors. Panic/poison behavior is exercised
+by deterministic real-executor regressions because unwinding through Loom's
+generator teardown can abort the verification process rather than report a
+modeled outcome.
 Retained stress tests exercise one hot identifier and many independent
 identifiers across shards. A byte-oriented fuzz target is not retained because
 there is no parser, unsafe code, or unconstrained input structure, and the pure
