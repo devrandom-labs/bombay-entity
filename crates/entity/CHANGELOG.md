@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/devrandom-labs/bombay-entity/compare/bombay-entity-v0.1.0...bombay-entity-v0.1.1) - 2026-08-12
+
+### Other
+
+- release v0.1.0 ([#4](https://github.com/devrandom-labs/bombay-entity/pull/4))
+
 ## [0.1.0](https://github.com/devrandom-labs/bombay-entity/releases/tag/bombay-entity-v0.1.0) - 2026-08-12
 
 ### Added
