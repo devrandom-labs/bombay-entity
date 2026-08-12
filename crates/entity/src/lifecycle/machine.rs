@@ -349,7 +349,7 @@ mod tests {
     use bombay_transition::Machine;
 
     use super::*;
-    use crate::{ActivationId, DispatchId, DrainFailure, DrainStage, SlotEvent};
+    use crate::{ActivationId, DispatchId, DrainFailure, DrainStage, SlotEffect, SlotEvent};
 
     fn activation(value: u64) -> ActivationId {
         ActivationId::new(NonZeroU64::new(value).unwrap())
@@ -575,14 +575,14 @@ mod tests {
             }
             if let TransitionEvidence::Ignored { .. } = output.evidence {
                 // An ignored input never changes state; the only effects it
-                // may emit are rejections returning owned commands.
+                // may emit are cleanup: rejections returning owned commands
+                // and retirement of stale incarnation leases.
                 assert!(
-                    output
-                        .effects
-                        .as_slice()
-                        .iter()
-                        .all(|effect| matches!(effect, SlotEffect::Reject { .. })),
-                    "ignored input produced non-reject effects"
+                    output.effects.as_slice().iter().all(|effect| matches!(
+                        effect,
+                        SlotEffect::Reject { .. } | SlotEffect::Retire { .. }
+                    )),
+                    "ignored input produced non-cleanup effects"
                 );
             }
             machine = successor;
