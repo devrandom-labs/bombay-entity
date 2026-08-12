@@ -242,3 +242,11 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   `Unavailable`, retry wedges/reuses the failed activation, or the failed command is delivered.
   Measurement: exact test, runtime suite, cleanup mutation, Clippy, and full gate. Rollback:
   test-and-ledger commit.
+- H52 post-rollback benchmark documentation: KEPT (E50). Threatened invariant: published
+  current-tree performance evidence must describe the implementation actually shipped. Workload:
+  retained directory benchmark built from exact HEAD and alternated with the pre-E39 standard-map
+  binary. Change: replace rejected E39 absolute figures and derived per-operation costs in the
+  architecture, and record the controlled ranges in the baseline ledger. Falsifier: any number is
+  not present in raw output, any retained minimum regresses beyond 5%, or docs still describe the
+  rejected candidate as current. Measurement: two alternating seven-repetition pairs plus docs
+  gate. Rollback: documentation-and-ledger commit.

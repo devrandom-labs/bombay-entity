@@ -104,3 +104,20 @@ its independent minima were still 16.36–16.54 ms against 15.15–15.20 ms, abo
 8–9% slower. Both exceed the declared 5% falsifier, so the workspace returned
 to the standard-library table and removed the added dependency. The earlier
 hot-path gains are rejected tradeoff evidence, not the final baseline.
+
+## Post-rollback final-tree comparison (2026-08-12)
+Two alternating executions of the retained pre-E39 standard-map binary and an
+exact current-tree release binary, seven repetitions each, produced these
+minimum ranges:
+
+| workload | retained std baseline | current tree | outcome |
+|---|---:|---:|---:|
+| activating_hot_key | 70.52–70.81 ms | 70.64–70.79 ms | noise |
+| active_hot_key | 138.35–138.59 ms | 138.68–139.13 ms | noise |
+| independent_keys | 15.09–15.23 ms | 15.07–15.60 ms | noise |
+| contended_active_key | 235.04–235.53 ms | 236.96–237.56 ms | noise |
+| stale_absent_callbacks | 36.88–37.37 ms | 37.23–38.06 ms | noise |
+
+Every current-tree minimum remains within the declared 5% decision band. The
+two executables have the same production directory implementation; subsequent
+changes affect transition annotations, documentation, and verification only.

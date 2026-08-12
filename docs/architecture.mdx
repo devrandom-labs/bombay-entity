@@ -551,24 +551,24 @@ following current-tree minimum and median over seven repetitions:
 ```text
 iterations=1000000
 repetitions=7
-activating_hot_key_min=61.249292ms
-activating_hot_key_median=61.387750ms
-active_hot_key_min=121.252583ms
-active_hot_key_median=122.153541ms
+activating_hot_key_min=70.790583ms
+activating_hot_key_median=71.030000ms
+active_hot_key_min=139.130333ms
+active_hot_key_median=139.617208ms
 independent_iterations=100000
-independent_keys_min=15.509125ms
-independent_keys_median=15.609917ms
+independent_keys_min=15.070541ms
+independent_keys_median=16.143541ms
 threads=8
 contended_iterations_per_thread=100000
-contended_active_key_min=205.246458ms
-contended_active_key_median=207.146375ms
-stale_absent_callbacks_min=37.220584ms
-stale_absent_callbacks_median=37.529916ms
+contended_active_key_min=237.556625ms
+contended_active_key_median=240.087708ms
+stale_absent_callbacks_min=38.056333ms
+stale_absent_callbacks_median=38.157958ms
 ```
 
-The minimums correspond to about 61.2 ns per activating-slot submission, 121.3
-ns per active delivery and resolution, 155.1 ns per new independent slot, and
-256.6 ns per contended active delivery and resolution. Every lifecycle output
+The minimums correspond to about 70.8 ns per activating-slot submission, 139.1
+ns per active delivery and resolution, 150.7 ns per new independent slot, and
+297.0 ns per contended active delivery and resolution. Every lifecycle output
 is interpreted, so the benchmark does not accumulate a synthetic pending-effect
 backlog. These dated current-tree measurements are regression references, not
 cross-machine comparisons; the controlled baseline comparison is retained in

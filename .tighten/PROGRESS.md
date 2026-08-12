@@ -287,3 +287,8 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - No further untested actionable high-value hypothesis emerged. Consecutive
   clean counter: 1. The next audit switches to dependency, allocation, and
   synchronization minimality.
+- The minimality pass found no duplicate dependency versions (`cargo tree
+  --duplicates` is empty), unnecessary production ownership path, or new
+  allocation. Exact current-tree benchmarks stayed within 5% of the retained
+  standard-map binary, but the architecture still printed rejected E39
+  absolute figures. E50 corrects that evidence; clean counter resets to 0.
