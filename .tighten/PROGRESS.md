@@ -238,3 +238,20 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   reset to zero. E46's cached-full-hash `HashTable` refinement remained about
   8-9% slower on independent keys, so both E39 and E46 were rolled back to the
   standard-library table and the added dependency was removed.
+
+## Fresh audit round 5 (post-E46 rollback, clean #1)
+- Re-read the full three-crate production surface and every manifest from the
+  standard-library-table tree. Public items remain documented and scoped to the
+  transition algebra, executor ownership protocol, lifecycle facts, directory
+  effects, and runtime facade; no new boolean/sentinel/error seam or unsafe code
+  was found.
+- Re-audited every production `expect`, clone, allocation, mutex, atomic, and
+  callback boundary. Panics remain poison/impossible-state assertions, clones
+  transfer documented ownership, active dispatch remains allocation-free, and
+  relaxed counters require uniqueness only. The rollback restores the already
+  characterized two-hash standard-map path without changing lifecycle logic.
+- Reconciled manifests, lockfile, inventory, API docs, architecture, hypothesis
+  status, and benchmark ledger after removing `hashbrown`; remaining mentions
+  are explicitly historical rejected-experiment evidence.
+- No untested actionable high-value hypothesis emerged. Consecutive clean
+  counter: 1. The next audit must use an independent verification-coverage lens.
