@@ -506,3 +506,53 @@ fn late_failed_delivery_after_removal_returns_the_command() {
         Action::Reject(dispatch_id, 2, Refusal::Unavailable) if *dispatch_id == reserved
     )));
 }
+
+#[test]
+fn retiring_rejects_dispatch_and_retires_stale_activation() {
+    let directory = Directory::new(DirectoryConfig::default()).unwrap();
+    let runtime = Recorder::default();
+    let entity_id = EntityId::new(27);
+    directory.interpret(directory.dispatch(entity_id, 1).unwrap().output, &runtime);
+    let Action::Start(activation_id) = runtime.0.lock().unwrap()[0] else {
+        panic!("activation not started");
+    };
+    directory.interpret(
+        directory.activation_succeeded(&entity_id, activation_id, 2, 3),
+        &runtime,
+    );
+    directory.interpret(
+        directory.delivery_resolved(&entity_id, activation_id, None),
+        &runtime,
+    );
+    directory.interpret(directory.begin_drain(&entity_id, activation_id), &runtime);
+    directory.interpret(
+        directory.fence_acknowledged(&entity_id, activation_id),
+        &runtime,
+    );
+
+    directory.interpret(directory.dispatch(entity_id, 9).unwrap().output, &runtime);
+    let stale = activation(activation_id.get().get() + 1);
+    directory.interpret(
+        directory.activation_succeeded(&entity_id, stale, 8, 9),
+        &runtime,
+    );
+
+    {
+        let actions = runtime.0.lock().unwrap();
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, Action::Reject(_, 9, Refusal::Draining)))
+        );
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::Retire(id, 9, RetirementMode::Forced(DrainFailure {
+                stage: DrainStage::Retirement,
+                outstanding_reservations: 0,
+            })) if *id == stale
+        )));
+    }
+
+    directory.interpret(directory.terminated(&entity_id, activation_id), &runtime);
+    assert!(directory.is_empty());
+}

@@ -62,6 +62,15 @@
             }
           );
           entity-doctest = craneLib.cargoDocTest (commonArgs // { inherit cargoArtifacts; });
+          entity-coverage = craneLib.cargoLlvmCov (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoLlvmCovCommand = "test";
+              # Baseline measured 2026-08-12 at 93.22% lines (.tighten/BASELINE.md).
+              cargoLlvmCovExtraArgs = "--workspace --fail-under-lines 93.2 --html --output-dir $out";
+            }
+          );
           entity-doc = craneLib.cargoDoc (commonArgs // { inherit cargoArtifacts; });
           entity-audit = craneLib.cargoAudit { inherit src advisory-db; };
           entity-deny = craneLib.cargoDeny { inherit src; };
