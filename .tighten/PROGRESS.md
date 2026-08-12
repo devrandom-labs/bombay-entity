@@ -292,3 +292,17 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   allocation. Exact current-tree benchmarks stayed within 5% of the retained
   standard-map binary, but the architecture still printed rejected E39
   absolute figures. E50 corrects that evidence; clean counter resets to 0.
+
+## Fresh audit round 7 (post-E50, clean #1)
+- Repeated the dependency, allocation, and synchronization-minimality pass on
+  exact HEAD. `cargo tree --workspace --duplicates` is empty; production has no
+  unsafe or lint suppression; every queue, mutex, atomic, `Arc`, clone, boxed
+  transient output, and multi-effect vector still carries a documented
+  ownership, ordering, or representation requirement.
+- Rechecked manifests, lockfile, inventory, architecture, and current benchmark
+  claims after E50. `hashbrown` remains absent from dependency state and appears
+  only in explicitly rejected historical evidence; no rejected absolute figure
+  remains in current documentation.
+- No untested actionable high-value hypothesis emerged. Consecutive clean
+  counter: 1. The next pass uses a fresh public-contract and failure-surface
+  lens.
