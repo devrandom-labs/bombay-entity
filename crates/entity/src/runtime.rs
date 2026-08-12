@@ -56,6 +56,12 @@ pub trait LocalEntityRuntime<I, C>: Send + Sync + 'static {
     type ActivationError: Send + 'static;
 
     /// Spawn work owned by the entity directory rather than a caller.
+    ///
+    /// The spawned task MUST be driven to completion: every lifecycle task
+    /// ends by submitting its typed fact back through the directory. Dropping
+    /// or canceling a task strands the entity — an activation task wedges the
+    /// slot in `Activating`, a delivery task wedges a drain, and a retirement
+    /// task leaks the directory entry.
     fn spawn(&self, task: impl Future<Output = ()> + Send + 'static);
 
     /// Prepare and transactionally activate an exact incarnation.

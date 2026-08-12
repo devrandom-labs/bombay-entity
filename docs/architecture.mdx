@@ -163,9 +163,12 @@ It does not cancel shared activation. A waiter is never transferred silently to
 a later activation ID and the runtime never retries its command automatically.
 
 The directory-owned task must clean up preparation failure, incarnation
-activation failure, stale validation, directory shutdown, panic, and task
-cancellation. No terminal path may strand an `Activating` slot or leak an
-incarnation lease.
+activation failure, and stale validation by submitting the corresponding typed
+fact. Panic and task cancellation cannot be cleaned up by the task itself;
+the runtime port's `spawn` contract therefore requires driving every spawned
+task to completion, and a runtime that cannot guarantee this must treat task
+loss as a supervisor-level concern. No graceful terminal path may strand an
+`Activating` slot or leak an incarnation lease.
 
 ## Slot state machine
 
@@ -228,35 +231,34 @@ Inactive
   -> Activating(activation_id)
   -> Active(activation_id, incarnation)
   -> Draining(activation_id)
+  -> Retiring(activation_id)
   -> Inactive
 ```
 
-Internally, inactive normally means absence from the map:
+Internally, inactive normally means absence from the map. The implemented
+slot state is:
 
 ```text
 Activating {
     activation_id,
     bounded_waiters,
-    cancellation,
 }
 
 Active {
     activation_id,
     endpoint,
     lease,
-    reserved_dispatches,
-    last_activity,
+    reservations,
 }
 
 Draining {
     activation_id,
     endpoint,
     lease,
-    reserved_dispatches,
-    fence_state,
-    deadline,
+    drain_progress,
 }
 ```
+
 
 Every asynchronous result carries `EntityId` and `ActivationId`. All slot
 transitions validate both slot allocation and activation ID.
@@ -352,12 +354,12 @@ nor non-completion.
 
 Fence failures are explicit:
 
+The implemented failure classification is:
+
 ```rust
 enum FenceFailure {
-    EnqueueFailed,
-    AcknowledgementDeliveryFailed,
-    AcknowledgementTimeout,
-    IncarnationTerminated,
+    Enqueue,
+    Acknowledgement,
 }
 ```
 
@@ -400,7 +402,8 @@ facts. Observing an incarnation reports the terminal outcome of one activation
 ID. Observing an entity reports directory lifecycle without promising that a
 particular incarnation remains live.
 
-Telemetry publishes activation, admission rejection, draining, fence,
+Telemetry publication is design intent and is not yet implemented. When
+added, it publishes activation, admission rejection, draining, fence,
 passivation, forced retirement, failure, and stale-event facts. Telemetry grants
 no entity-control capability and is emitted after state transitions, outside
 locks.
@@ -431,8 +434,10 @@ and the concise asynchronous API. The bounded trace test enumerates the finite
 event alphabet and compares every successor with the independent structural
 model while checking declared-edge evidence.
 
-Four Loom models explore activation claim, delivery/drain ordering,
-slot-replacement removal, and cancellation/activation ownership interleavings.
+Five abstract Loom protocol models explore activation claim, delivery/drain
+ordering, slot-replacement removal, admission racing, and
+cancellation/activation ownership interleavings, and three further Loom models
+drive the real machine executors.
 Retained stress tests exercise one hot identifier and many independent
 identifiers across shards. A byte-oriented fuzz target is not retained because
 there is no parser, unsafe code, or unconstrained input structure, and the pure
@@ -443,7 +448,7 @@ Miri is not available in the pinned Rust 1.96 Nix toolchain (`cargo miri`
 reports that no such command is installed). The implementation contains no
 `unsafe` blocks. The reproducible gates are workspace tests, strict all-target
 Clippy, the retained Loom and stress tests, both benchmarks, LLVM coverage, and
-all eight flake checks.
+all nine flake checks.
 
 ## Research basis
 

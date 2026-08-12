@@ -12,7 +12,7 @@ The first version is local and in-memory. Its responsibilities are:
 - routing admitted commands to the committed incarnation;
 - passivation that closes admission before accepted work drains;
 - rejection of stale completion and passivation events;
-- typed replies and lifecycle telemetry without exposing runtime control.
+- typed replies without exposing runtime control.
 
 The lifecycle is:
 
@@ -21,6 +21,7 @@ Inactive
   -> Activating(generation)
   -> Active(generation, actor reference)
   -> Draining(generation)
+  -> Retiring(generation)
   -> Inactive
 ```
 

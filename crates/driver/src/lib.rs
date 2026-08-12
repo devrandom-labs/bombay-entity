@@ -144,8 +144,11 @@ impl<M: Machine> SerializedExecutor<M> {
     ///
     /// Reentrant and concurrent calls enqueue their input and return a receipt;
     /// they never advance a transition while an earlier output is being handled.
-    /// Waiting on a receipt from inside `handler` would deadlock and must be
-    /// deferred until the outer turn returns.
+    /// Only the drain owner's `handler` processes outputs: a caller that loses
+    /// ownership has its input handled by the owner's handler, while its
+    /// receipt still reports completion of its own turn. Waiting on a receipt
+    /// from inside `handler` would deadlock and must be deferred until the
+    /// outer turn returns.
     ///
     /// # Errors
     ///
