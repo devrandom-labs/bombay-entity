@@ -353,6 +353,11 @@ where
     /// and this call is fire-and-forget; it does not mean the caller's output
     /// completed. If a handler panics, its owned output is dropped exactly once
     /// and a later call resumes with the remaining queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if executor synchronization was poisoned by a transition panic
+    /// in [`LinearizedExecutor::submit`].
     pub fn dispatch_pending<H>(&self, handler: &H) -> DispatchOutcome
     where
         H: OutputHandler<M::Output>,

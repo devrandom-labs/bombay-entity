@@ -344,9 +344,10 @@ pub enum SlotEffect<C, E, L> {
         /// Graceful or explicitly forced classification.
         retirement: RetirementMode,
     },
-    /// Compare slot and activation identities, then remove the directory entry.
+    /// Remove the directory entry; slot pointer identity is the exact removal
+    /// authority because one slot allocation never serves a second activation.
     Remove {
-        /// Identity to compare alongside the slot allocation.
+        /// Identity of the incarnation whose lifecycle produced this removal.
         activation_id: ActivationId,
     },
 }
