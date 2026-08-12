@@ -234,3 +234,11 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   count is nonzero, graceful retirement occurs, or the task fails to complete. Measurement: exact
   runtime test, runtime suite, mapping mutation, Clippy, and full gate. Rollback: test-and-ledger
   commit.
+- H51 activation-failure facade ownership: KEPT (E49). Threatened invariants: transactional
+  activation failure returns the original command exactly once and removes the failed slot so a
+  later dispatch can activate afresh. Workload: inject activation failure through the runtime port,
+  await the public dispatch result, then clear the failure and retry the same entity. Change:
+  focused runtime regression. Falsifier: command ownership is lost/changed, refusal is not
+  `Unavailable`, retry wedges/reuses the failed activation, or the failed command is delivered.
+  Measurement: exact test, runtime suite, cleanup mutation, Clippy, and full gate. Rollback:
+  test-and-ledger commit.

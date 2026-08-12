@@ -266,3 +266,8 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   and acknowledgement failures preserve their distinct forced-drain stages;
   collapsing the mapping is killed. All nine runtime tests and strict entity
   Clippy are green. Clean counter remains 0.
+- E49 closes the activation-error facade seam: injected transactional failure
+  returns the exact command as `Unavailable`, delivers nothing, removes the
+  failed slot, and a retry performs a fresh activation. Removing the cleanup
+  effect is killed by the retry assertion. All ten runtime tests and strict
+  entity Clippy are green. Clean counter remains 0.

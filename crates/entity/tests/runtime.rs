@@ -40,6 +40,7 @@ struct TestRuntime {
 struct TestRuntimeState {
     activations: AtomicUsize,
     activation_completions: AtomicUsize,
+    fail_activation: AtomicBool,
     fail_delivery: AtomicBool,
     delivered: Mutex<Vec<u64>>,
     activation_gate: Mutex<Option<Arc<ActivationGate>>>,
@@ -57,6 +58,7 @@ impl TestRuntime {
             state: Arc::new(TestRuntimeState {
                 activations: AtomicUsize::new(0),
                 activation_completions: AtomicUsize::new(0),
+                fail_activation: AtomicBool::new(false),
                 fail_delivery: AtomicBool::new(false),
                 delivered: Mutex::new(Vec::new()),
                 activation_gate: Mutex::new(None),
@@ -93,6 +95,9 @@ impl<I: Send + 'static> LocalEntityRuntime<I, u64> for TestRuntime {
         self.state
             .activation_completions
             .fetch_add(1, Ordering::Release);
+        if self.state.fail_activation.load(Ordering::Relaxed) {
+            return Err(());
+        }
         Ok(Activated {
             endpoint: activation_id.get().get(),
             lease: activation_id.get().get(),
@@ -274,6 +279,34 @@ fn failed_delivery_returns_the_original_command() {
             reason: Refusal::Unavailable,
         }
     ));
+}
+
+#[test]
+fn failed_activation_returns_the_command_and_allows_retry() {
+    let actor_runtime = TestRuntime::new();
+    let observations = actor_runtime.clone();
+    actor_runtime
+        .state
+        .fail_activation
+        .store(true, Ordering::Relaxed);
+    let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime).unwrap();
+    let entity_id = EntityId::new(11);
+
+    assert!(matches!(
+        block_on(entities.dispatch(entity_id, 81)),
+        Err(DispatchFailure::Refused {
+            command: 81,
+            reason: Refusal::Unavailable,
+        })
+    ));
+    observations
+        .state
+        .fail_activation
+        .store(false, Ordering::Relaxed);
+    block_on(entities.dispatch(entity_id, 82)).unwrap();
+
+    assert_eq!(observations.state.activations.load(Ordering::Acquire), 2);
+    assert_eq!(*observations.state.delivered.lock().unwrap(), [82]);
 }
 
 #[test]
