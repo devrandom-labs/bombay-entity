@@ -39,3 +39,20 @@ Raw timing harness (not criterion); single run, noise unquantified — hypothesi
 | claim_activation_step | 14.77 ms | 15.26 ms |
 
 Decision rule: only deltas >5% on min are decision-grade.
+
+## Final controlled comparison (2026-08-11, evening, same machine conditions)
+Machine slowed ~1.45x globally during the session (thermal); absolute morning
+numbers are not comparable. Definitive control: baseline commit 419a979 benched
+in a worktree under identical current conditions vs final tree.
+
+| workload | 419a979 (control) | final tree | delta |
+|---|---|---|---|
+| activating_hot_key | 69.61 ms | 71.96 ms | +3% (noise) |
+| active_hot_key | 138.54 ms | 140.94 ms | +2% (noise) |
+| independent_keys | 18.52 ms | 15.13 ms | -18% |
+| contended_active_key | 248.79 ms | 238.98 ms | -4% |
+| ignored_step | 15.17 ms | 14.42 ms | -5% |
+| claim_activation_step | 22.21 ms | 21.46 ms | -3% |
+| stale_absent_callbacks | ~84-88 ms (E24 pre-measure) | 36.98 ms | ~-57% |
+
+Verdict: maintain-or-improve satisfied under controlled conditions.

@@ -86,3 +86,19 @@ Adversary3 verdict: correct — no HARD findings. Three P3s handled in E29 (bab1
 doc overclaim on DispatchId forging, stale dual-removal doc clause, and a new pinned invariant
 (ignored inputs emit only cleanup effects; the assertion surfaced sanctioned Retire-under-Ignored).
 Audit counter: round 3 = clean #1 (P3-only). Round 4 spawned as clean #2 candidate.
+
+## FIXED POINT REACHED (2026-08-11)
+Convergence protocol satisfied:
+- Two consecutive fresh whole-workspace audits clean: round 3 (P3-only, fixed in E29/E30),
+  round 4 (clean at HARD level; falsification attempts on removal authority, transient path,
+  poison recovery, completion protocol all failed to break the design).
+- Contract verified item-by-item (see round 2 section).
+- Full Nix gate green incl. entity-loom; 56/56 nextest; clippy/fmt/doc/doctest/audit/deny green.
+- Final metrics: controlled same-conditions A/B vs baseline commit — all workloads equal or
+  better; stale callbacks -57%. Recorded in BASELINE.md.
+- 30 experiments: E01-E30; kept 22, reverted 2 (E16 smallvec benchmark regression, E19
+  operator-rejected parking_lot), blocked-upstream 1 (E26 entity real-SUT loom needs
+  bombay-behavior loom-awareness), analysis-rejected remainder with evidence in DEAD_ENDS.md.
+- Residual known-accepted: see DEAD_ENDS.md (H32 algebra sentinel, E26 upstream block).
+
+SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
