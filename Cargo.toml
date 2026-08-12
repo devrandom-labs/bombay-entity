@@ -15,9 +15,9 @@ name = "bombay-entity"
 
 [workspace.dependencies]
 bombay-entity = { path = "crates/entity" }
-bombay-machine-executor = { path = "crates/driver" }
+bombay-machine-executor = { path = "crates/driver", version = "0.1.0" }
 behavior = { package = "bombay-behavior", version = "0.9.1" }
-bombay-transition = { path = "crates/transition" }
+bombay-transition = { path = "crates/transition", version = "0.1.0" }
 thiserror = { version = "2.0.20", default-features = false }
 
 [workspace.lints.clippy]
