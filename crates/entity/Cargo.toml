@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "directory"
 harness = false
+
+[[bench]]
+name = "exclusive_executor"
+harness = false

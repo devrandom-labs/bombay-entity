@@ -1,6 +1,8 @@
 //! Concurrent execution policies for pure representable machines.
 //!
-//! [`SerializedExecutor`] provides run-to-completion turns: it queues inputs
+//! [`ExclusiveExecutor`] directly returns outputs to a caller that serializes
+//! turns through exclusive access. [`SerializedExecutor`] provides
+//! run-to-completion turns: it queues inputs
 //! and does not advance the next transition until the preceding output handler
 //! returns. [`LinearizedExecutor`] advances inputs immediately under its lock,
 //! then dispatches already-ordered outputs. The latter policy is appropriate
@@ -15,6 +17,98 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 
 pub use bombay_transition::Machine;
+
+#[derive(Debug)]
+enum ExclusiveSeat<M> {
+    Ready(M),
+    Poisoned,
+}
+
+/// Observable state of an [`ExclusiveExecutor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExclusiveState {
+    /// The successor machine is available for another turn.
+    Ready,
+    /// A machine transition panicked and consumed the previous machine.
+    Poisoned,
+}
+
+/// Failure to recover a machine consumed by a panicking transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("executor was poisoned by a previous panic")]
+pub struct ExclusivePoisoned;
+
+/// Allocation-free execution of an affine machine through exclusive access.
+///
+/// A turn installs the poisoned state before calling [`Machine::step`]. If the
+/// transition unwinds, no machine remains accessible and all future inputs are
+/// rejected intact. Output consumption after a successful turn is outside this
+/// poison boundary.
+#[derive(Debug)]
+pub struct ExclusiveExecutor<M: Machine> {
+    seat: ExclusiveSeat<M>,
+}
+
+impl<M: Machine> ExclusiveExecutor<M> {
+    /// Construct an executor containing `machine`.
+    #[must_use]
+    pub const fn new(machine: M) -> Self {
+        Self {
+            seat: ExclusiveSeat::Ready(machine),
+        }
+    }
+
+    /// Execute one immediate turn and install its successor.
+    ///
+    /// # Errors
+    ///
+    /// Returns the supplied input without accepting it if an earlier transition
+    /// poisoned the executor. An input consumed by a transition that panics is
+    /// not recoverable.
+    ///
+    /// # Panics
+    ///
+    /// Propagates a panic from [`Machine::step`] after poisoning the executor.
+    pub fn turn(&mut self, input: M::Input) -> Result<M::Output, PoisonedInput<M::Input>> {
+        let machine = match core::mem::replace(&mut self.seat, ExclusiveSeat::Poisoned) {
+            ExclusiveSeat::Ready(machine) => machine,
+            ExclusiveSeat::Poisoned => return Err(PoisonedInput(input)),
+        };
+        let (output, successor) = machine.step(input);
+        self.seat = ExclusiveSeat::Ready(successor);
+        Ok(output)
+    }
+
+    /// Report whether a successor machine remains available.
+    #[must_use]
+    pub const fn state(&self) -> ExclusiveState {
+        match &self.seat {
+            ExclusiveSeat::Ready(_) => ExclusiveState::Ready,
+            ExclusiveSeat::Poisoned => ExclusiveState::Poisoned,
+        }
+    }
+
+    /// Borrow the current successor machine, or `None` if it was poisoned.
+    #[must_use]
+    pub const fn machine(&self) -> Option<&M> {
+        match &self.seat {
+            ExclusiveSeat::Ready(machine) => Some(machine),
+            ExclusiveSeat::Poisoned => None,
+        }
+    }
+
+    /// Recover the current successor machine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExclusivePoisoned`] if a panicking transition consumed it.
+    pub fn into_inner(self) -> Result<M, ExclusivePoisoned> {
+        match self.seat {
+            ExclusiveSeat::Ready(machine) => Ok(machine),
+            ExclusiveSeat::Poisoned => Err(ExclusivePoisoned),
+        }
+    }
+}
 
 /// Handles one machine output synchronously.
 pub trait OutputHandler<O> {
@@ -444,8 +538,8 @@ mod tests {
     use bombay_transition::{Base, Topology, Vertex, VertexId};
 
     use super::{
-        LinearizedExecutor, OutputEvidence, OutputHandler, SerializedExecutor, TurnOutcome,
-        TurnReceipt,
+        ExclusiveExecutor, ExclusiveState, LinearizedExecutor, Machine, OutputEvidence,
+        OutputHandler, SerializedExecutor, TurnOutcome, TurnReceipt,
     };
 
     const VERTICES: &[Vertex] = &[Vertex {
@@ -473,6 +567,232 @@ mod tests {
         Base::new(0, TOPOLOGY.validated().unwrap(), |state, input| {
             (Output(input), state + input)
         })
+    }
+
+    #[derive(Debug)]
+    struct ExclusiveTestMachine {
+        state: usize,
+        steps: Arc<std::sync::atomic::AtomicUsize>,
+        panic: bool,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct OwnedOutput(Box<str>);
+
+    impl Machine for ExclusiveTestMachine {
+        type Input = usize;
+        type Output = OwnedOutput;
+
+        fn step(self, input: Self::Input) -> (Self::Output, Self) {
+            self.steps.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(!self.panic, "transition failure");
+            let successor = Self {
+                state: self.state + input,
+                steps: self.steps,
+                panic: false,
+            };
+            (OwnedOutput(format!("output-{input}").into()), successor)
+        }
+
+        fn describe<V: bombay_transition::Structure>(&self, visitor: &mut V) -> V::Output {
+            visitor.base(TOPOLOGY)
+        }
+    }
+
+    #[test]
+    fn exclusive_turn_returns_output_and_installs_successor() {
+        let steps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut executor = ExclusiveExecutor::new(ExclusiveTestMachine {
+            state: 1,
+            steps: Arc::clone(&steps),
+            panic: false,
+        });
+
+        assert_eq!(executor.state(), ExclusiveState::Ready);
+        assert_eq!(executor.machine().unwrap().state, 1);
+        assert_eq!(executor.turn(2).unwrap(), OwnedOutput("output-2".into()));
+        assert_eq!(executor.machine().unwrap().state, 3);
+        assert_eq!(executor.turn(4).unwrap(), OwnedOutput("output-4".into()));
+        assert_eq!(executor.into_inner().unwrap().state, 7);
+        assert_eq!(steps.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn exclusive_transition_panic_permanently_refuses_later_input() {
+        let steps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut executor = ExclusiveExecutor::new(ExclusiveTestMachine {
+            state: 0,
+            steps: Arc::clone(&steps),
+            panic: true,
+        });
+
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                let _ = executor.turn(1);
+            }))
+            .is_err()
+        );
+        assert_eq!(executor.state(), ExclusiveState::Poisoned);
+        assert!(executor.machine().is_none());
+        let Err(rejected) = executor.turn(9) else {
+            panic!("poisoned executor accepted input")
+        };
+        assert_eq!(rejected.0, 9);
+        assert_eq!(steps.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(matches!(
+            executor.into_inner(),
+            Err(super::ExclusivePoisoned)
+        ));
+    }
+
+    #[test]
+    fn exclusive_executor_inherits_machine_auto_traits() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ExclusiveExecutor<ExclusiveTestMachine>>();
+    }
+
+    #[derive(Debug)]
+    struct DropSentinel(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Drop for DropSentinel {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Debug)]
+    struct TrackedInput {
+        id: usize,
+        _drop: DropSentinel,
+    }
+
+    #[derive(Debug)]
+    struct TrackedOutput {
+        id: usize,
+        _drop: DropSentinel,
+    }
+
+    #[derive(Debug)]
+    struct OwnershipMachine {
+        panic: bool,
+        steps: Arc<std::sync::atomic::AtomicUsize>,
+        _machine_drop: DropSentinel,
+        successor_drops: Arc<std::sync::atomic::AtomicUsize>,
+        output_drops: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Machine for OwnershipMachine {
+        type Input = TrackedInput;
+        type Output = TrackedOutput;
+
+        fn step(self, input: Self::Input) -> (Self::Output, Self) {
+            self.steps.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(!self.panic, "transition failure");
+            let output = TrackedOutput {
+                id: input.id,
+                _drop: DropSentinel(Arc::clone(&self.output_drops)),
+            };
+            drop(input);
+            let successor = Self {
+                panic: false,
+                steps: Arc::clone(&self.steps),
+                _machine_drop: DropSentinel(Arc::clone(&self.successor_drops)),
+                successor_drops: self.successor_drops,
+                output_drops: self.output_drops,
+            };
+            (output, successor)
+        }
+
+        fn describe<V: bombay_transition::Structure>(&self, visitor: &mut V) -> V::Output {
+            visitor.base(TOPOLOGY)
+        }
+    }
+
+    #[test]
+    fn exclusive_success_moves_each_owned_payload_exactly_once() {
+        let original_machine_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let successor_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let input_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let output_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let steps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut executor = ExclusiveExecutor::new(OwnershipMachine {
+            panic: false,
+            steps: Arc::clone(&steps),
+            _machine_drop: DropSentinel(Arc::clone(&original_machine_drops)),
+            successor_drops: Arc::clone(&successor_drops),
+            output_drops: Arc::clone(&output_drops),
+        });
+
+        let output = executor
+            .turn(TrackedInput {
+                id: 41,
+                _drop: DropSentinel(Arc::clone(&input_drops)),
+            })
+            .unwrap();
+        assert_eq!(output.id, 41);
+        assert_eq!(steps.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            original_machine_drops.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(input_drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(successor_drops.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(output_drops.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        drop(output);
+        drop(executor.into_inner().unwrap());
+        assert_eq!(output_drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(successor_drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn exclusive_panic_consumes_active_values_but_returns_later_input() {
+        let machine_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let accepted_input_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rejected_input_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let steps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut executor = ExclusiveExecutor::new(OwnershipMachine {
+            panic: true,
+            steps: Arc::clone(&steps),
+            _machine_drop: DropSentinel(Arc::clone(&machine_drops)),
+            successor_drops: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            output_drops: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        });
+
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                let _ = executor.turn(TrackedInput {
+                    id: 1,
+                    _drop: DropSentinel(Arc::clone(&accepted_input_drops)),
+                });
+            }))
+            .is_err()
+        );
+        assert_eq!(machine_drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            accepted_input_drops.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        let Err(rejected) = executor.turn(TrackedInput {
+            id: 73,
+            _drop: DropSentinel(Arc::clone(&rejected_input_drops)),
+        }) else {
+            panic!("poisoned executor accepted input")
+        };
+        assert_eq!(rejected.0.id, 73);
+        assert_eq!(steps.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            rejected_input_drops.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        drop(rejected);
+        assert_eq!(
+            rejected_input_drops.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        drop(executor);
+        assert_eq!(machine_drops.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

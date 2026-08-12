@@ -195,7 +195,13 @@ does not acquire locks, start tasks, read clocks, or invoke endpoints.
 `bombay-transition` remains the allocation-free `no_std` description and
 composition layer. It does not gain locks, queues, or runtime policy.
 
-`bombay-machine-executor` provides two deliberately distinct execution laws.
+`bombay-machine-executor` provides three deliberately distinct execution laws.
+`ExclusiveExecutor<M>` executes one immediate transition for a caller that
+already serializes turns through exclusive `&mut` access. It returns the output
+directly, allocates no executor machinery, and permanently withdraws the
+machine if `Machine::step` unwinds. Later output consumption is outside that
+poison boundary.
+
 `SerializedExecutor<M>` queues inputs and completes each synchronous output
 handler before advancing the next transition. This is the run-to-completion law
 required by behavior and actor lifecycle turns. Each submission has a receipt;

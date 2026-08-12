@@ -7,11 +7,40 @@ use bombay_entity::{
     ActivationId, DirectoryConfig, DispatchId, EffectInterpreter, EntityId, LocalDirectory,
     Refusal, RetirementMode,
 };
+use bombay_machine_executor::ExclusiveExecutor;
+use bombay_transition::{Machine, Structure, Topology, Vertex, VertexId};
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
 type Directory = LocalDirectory<usize, usize, usize, usize>;
+
+const VERTICES: &[Vertex] = &[Vertex {
+    id: VertexId(0),
+    label: "ready",
+}];
+const TOPOLOGY: Topology = Topology {
+    name: "allocation-test",
+    initial: VertexId(0),
+    vertices: VERTICES,
+    transitions: &[],
+};
+
+struct CounterMachine(usize);
+
+impl Machine for CounterMachine {
+    type Input = usize;
+    type Output = usize;
+
+    fn step(self, input: Self::Input) -> (Self::Output, Self) {
+        let successor = self.0.wrapping_add(input);
+        (successor, Self(successor))
+    }
+
+    fn describe<V: Structure>(&self, visitor: &mut V) -> V::Output {
+        visitor.base(TOPOLOGY)
+    }
+}
 
 #[derive(Default)]
 struct Bootstrap(Mutex<Option<ActivationId>>);
@@ -95,5 +124,20 @@ fn active_dispatch_stays_under_allocation_ceiling() {
         (blocks, bytes),
         (0, 0),
         "allocations over {ITERATIONS} dispatches"
+    );
+
+    let mut executor = ExclusiveExecutor::new(CounterMachine(0));
+    let before = dhat::HeapStats::get();
+    for input in 0..ITERATIONS {
+        std::hint::black_box(executor.turn(std::hint::black_box(input)).unwrap());
+    }
+    let after = dhat::HeapStats::get();
+    assert_eq!(
+        (
+            after.total_blocks - before.total_blocks,
+            after.total_bytes - before.total_bytes,
+        ),
+        (0, 0),
+        "exclusive executor allocations over {ITERATIONS} turns"
     );
 }
