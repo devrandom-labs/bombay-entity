@@ -326,3 +326,17 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   despite the later rollback. E51 makes the historical heading explicit, adds
   an append-only terminal E39 rejection status, and removes the stale
   `DEAD_ENDS` “none yet” placeholder. Clean counter resets to 0.
+
+## Fresh audit round 9 (post-E51, clean #1)
+- Rechecked the chronological experiment ledger, hypothesis terminal states,
+  dead-end prerequisites, completion headings, rollback commit, dependency
+  state, and benchmark evidence as one consistency graph. Every started
+  experiment has a later terminal record; E39's latest same-ID status is the
+  post-validation rejection; E46 records the failed refinement; E50 records the
+  restored final tree; no current completion heading exists.
+- The only blocked work remains real-`LocalDirectory` Loom instrumentation,
+  whose upstream `bombay-behavior`/`bombay-communication` cfg incompatibility is
+  unchanged and cannot be resolved inside this semantics-preserving workspace.
+- No untested actionable high-value hypothesis emerged. Consecutive clean
+  counter: 1. The next pass independently rechecks test machinery and production
+  invariants rather than ledger state.
