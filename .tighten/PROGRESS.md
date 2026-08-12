@@ -255,3 +255,9 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   are explicitly historical rejected-experiment evidence.
 - No untested actionable high-value hypothesis emerged. Consecutive clean
   counter: 1. The next audit must use an independent verification-coverage lens.
+- The verification-coverage lens falsified that streak: the public
+  `Passivation::Superseded` branch had no direct runtime regression. E47 now
+  pauses a passivation after activation observation, replaces the incarnation,
+  resumes the stale drain request, and proves `Superseded` without draining the
+  replacement. Five exact runs, all eight runtime tests, strict entity Clippy,
+  and an effective classification mutation are green. Clean counter reset to 0.

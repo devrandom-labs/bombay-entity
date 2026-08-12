@@ -219,3 +219,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   than the pre-E39 baseline, or the hot-path gain disappears. Measurement: targeted tests,
   alternating seven-repetition benchmark binaries, Clippy, and full gate. Rollback: one experiment
   commit.
+- H49 superseded-passivation classification: KEPT (E47). Threatened invariant: a passivation
+  caller must not claim it drained an incarnation that was replaced after observation. Workload:
+  pause the call between `current_activation` and `begin_drain`, fully retire the observed
+  incarnation, activate a replacement, then resume. Change: deterministic runtime regression for
+  the public `Passivation::Superseded` branch. Falsifier: the call reports `Begun`, drains the
+  replacement, deadlocks, or the race cannot be deterministically reproduced. Measurement: exact
+  repeated test, runtime suite, Clippy, and full gate. Rollback: test-and-ledger commit.

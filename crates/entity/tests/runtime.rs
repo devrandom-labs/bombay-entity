@@ -1,7 +1,8 @@
 use std::future::Future;
+use std::hash::{Hash, Hasher};
 use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 use std::time::Duration;
@@ -66,7 +67,7 @@ impl TestRuntime {
     }
 }
 
-impl LocalEntityRuntime<u64, u64> for TestRuntime {
+impl<I: Send + 'static> LocalEntityRuntime<I, u64> for TestRuntime {
     type Endpoint = u64;
     type Lease = u64;
     type ActivationError = ();
@@ -77,7 +78,7 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
 
     async fn activate(
         &self,
-        _: EntityId<u64>,
+        _: EntityId<I>,
         activation_id: ActivationId,
     ) -> Result<Activated<Self::Endpoint, Self::Lease>, Self::ActivationError> {
         self.state.activations.fetch_add(1, Ordering::Relaxed);
@@ -118,6 +119,76 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
 
     async fn retire(&self, _: Self::Lease, _: RetirementMode) {
         self.state.retirements.fetch_add(1, Ordering::Release);
+    }
+}
+
+struct HashGate {
+    state: Mutex<HashGateState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct HashGateState {
+    blocked_thread: Option<thread::ThreadId>,
+    calls: usize,
+    blocked: bool,
+    released: bool,
+}
+
+impl HashGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(HashGateState::default()),
+            changed: Condvar::new(),
+        })
+    }
+
+    fn block_third_hash_on_this_thread(&self) {
+        self.state.lock().unwrap().blocked_thread = Some(thread::current().id());
+    }
+
+    fn wait_until_blocked(&self) {
+        let mut state = self.state.lock().unwrap();
+        while !state.blocked {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
+}
+
+#[derive(Clone)]
+struct GatedId {
+    value: u64,
+    gate: Arc<HashGate>,
+}
+
+impl PartialEq for GatedId {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for GatedId {}
+
+impl Hash for GatedId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+        let mut gate = self.gate.state.lock().unwrap();
+        if gate.blocked_thread == Some(thread::current().id()) {
+            gate.calls += 1;
+            if gate.calls == 3 {
+                gate.blocked = true;
+                self.gate.changed.notify_all();
+                while !gate.released {
+                    gate = self.gate.changed.wait(gate).unwrap();
+                }
+            }
+        }
     }
 }
 
@@ -297,6 +368,62 @@ fn repeated_passivation_reports_already_passivating() {
     }
     assert_eq!(observations.state.fences.load(Ordering::Relaxed), 1);
     assert_eq!(observations.state.retirements.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn passivation_reports_superseded_after_incarnation_replacement() {
+    let gate = HashGate::new();
+    let entity_id = EntityId::new(GatedId {
+        value: 8,
+        gate: Arc::clone(&gate),
+    });
+    let actor_runtime = TestRuntime::new();
+    let observations = actor_runtime.clone();
+    let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime).unwrap();
+    block_on(entities.dispatch(entity_id.clone(), 1)).unwrap();
+
+    let racing_runtime = entities.clone();
+    let racing_id = entity_id.clone();
+    let racing_gate = Arc::clone(&gate);
+    let passivation = thread::spawn(move || {
+        racing_gate.block_third_hash_on_this_thread();
+        racing_runtime.passivate(&racing_id)
+    });
+    gate.wait_until_blocked();
+
+    assert_eq!(entities.passivate(&entity_id), Passivation::Begun);
+    for _ in 0..1_000 {
+        if observations.state.retirements.load(Ordering::Acquire) != 0 {
+            break;
+        }
+        thread::yield_now();
+    }
+    assert_eq!(observations.state.retirements.load(Ordering::Acquire), 1);
+    let mut command = 2;
+    let mut replacement_activated = false;
+    for _ in 0..1_000 {
+        match block_on(entities.dispatch(entity_id.clone(), command)) {
+            Ok(()) => {
+                replacement_activated = true;
+                break;
+            }
+            Err(DispatchFailure::Refused {
+                command: returned, ..
+            }) => {
+                command = returned;
+                thread::yield_now();
+            }
+            Err(failure) => panic!("unexpected replacement dispatch failure: {failure}"),
+        }
+    }
+    assert!(
+        replacement_activated,
+        "replacement activation did not complete"
+    );
+
+    gate.release();
+    assert_eq!(passivation.join().unwrap(), Passivation::Superseded);
+    assert_eq!(observations.state.activations.load(Ordering::Acquire), 2);
 }
 
 #[test]
