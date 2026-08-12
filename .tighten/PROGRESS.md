@@ -136,3 +136,6 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   is unchanged.
 - Next lens: concurrency and completion/cancellation interleavings, starting from real runtime code
   rather than the abstract entity Loom protocol models.
+- E34 kept: a real-runtime gated-delivery test located the cancellation linearization boundary.
+  Dropping during activation cancels the waiter; dropping after active delivery owns the command
+  cannot retract delivery. Corrected the architecture/API overclaim; production unchanged.

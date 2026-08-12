@@ -158,9 +158,12 @@ first dispatch claims Activating(g)
     -> directory commits Active(g, endpoint, lease)
 ```
 
-Dropping a dispatch future drops its command and releases only its waiter seat.
-It does not cancel shared activation. A waiter is never transferred silently to
-a later activation ID and the runtime never retries its command automatically.
+Dropping a dispatch future while its command is still a bounded activation
+waiter drops that command and releases only its waiter seat. It does not cancel
+shared activation. Once active-delivery ownership has linearized and moved the
+command into a spawned delivery task, dropping the waiting future does not
+retract that delivery. A waiter is never transferred silently to a later
+activation ID and the runtime never retries its command automatically.
 
 The directory-owned task must clean up preparation failure, incarnation
 activation failure, and stale validation by submitting the corresponding typed

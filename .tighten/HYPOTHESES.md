@@ -114,3 +114,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   field-preserving inner event type; production remains untouched. Falsifier: any lane returns
   `None`, selects the wrong `EntityEvent` variant, or changes an event field. Measurement: targeted
   protocol unit tests and coverage report. Rollback: test-and-ledger commit.
+- H36 dispatch cancellation authority: KEPT (E34). Threatened invariant: documentation must not
+  promise cancellation after command ownership has crossed the active-delivery linearization
+  point. Workload: drop a polled dispatch future while its spawned delivery is gated. Change:
+  characterize the real runtime race, then scope the architecture claim to bounded activation
+  waiters if delivery continues. Falsifier: the gated command is dropped rather than delivered, or
+  the existing activation-waiter cancellation behavior changes. Measurement: both cancellation
+  tests plus all-target entity Clippy. Rollback: test-and-documentation commit.

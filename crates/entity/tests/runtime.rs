@@ -41,6 +41,7 @@ struct TestRuntimeState {
     fail_delivery: AtomicBool,
     delivered: Mutex<Vec<u64>>,
     activation_gate: Mutex<Option<Arc<ActivationGate>>>,
+    delivery_gate: Mutex<Option<Arc<ActivationGate>>>,
     fence_gate: Mutex<Option<Arc<ActivationGate>>>,
     fences: AtomicUsize,
     retirements: AtomicUsize,
@@ -54,6 +55,7 @@ impl TestRuntime {
                 fail_delivery: AtomicBool::new(false),
                 delivered: Mutex::new(Vec::new()),
                 activation_gate: Mutex::new(None),
+                delivery_gate: Mutex::new(None),
                 fence_gate: Mutex::new(None),
                 fences: AtomicUsize::new(0),
                 retirements: AtomicUsize::new(0),
@@ -88,6 +90,10 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
     }
 
     async fn deliver(&self, _: Self::Endpoint, command: u64) -> Result<(), u64> {
+        let gate = self.state.delivery_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.wait().await;
+        }
         if self.state.fail_delivery.load(Ordering::Relaxed) {
             Err(command)
         } else {
@@ -209,6 +215,33 @@ fn canceling_dispatch_does_not_cancel_shared_activation_or_deliver_command() {
 
     assert_eq!(observations.state.activations.load(Ordering::Relaxed), 1);
     assert!(observations.state.delivered.lock().unwrap().is_empty());
+}
+
+#[test]
+fn dropping_active_dispatch_does_not_retract_owned_delivery() {
+    let actor_runtime = TestRuntime::new();
+    let observations = actor_runtime.clone();
+    let entities = EntityRuntime::new(DirectoryConfig::default(), actor_runtime.clone()).unwrap();
+    let entity_id = EntityId::new(8);
+    block_on(entities.dispatch(entity_id, 1)).unwrap();
+
+    let gate = ActivationGate::closed();
+    *actor_runtime.state.delivery_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let mut dispatch = Box::pin(entities.dispatch(entity_id, 2));
+    let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
+    let mut context = Context::from_waker(&waker);
+    assert!(dispatch.as_mut().poll(&mut context).is_pending());
+
+    drop(dispatch);
+    gate.open();
+    for _ in 0..100 {
+        if observations.state.delivered.lock().unwrap().len() == 2 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    assert_eq!(*observations.state.delivered.lock().unwrap(), [1, 2]);
 }
 
 #[test]

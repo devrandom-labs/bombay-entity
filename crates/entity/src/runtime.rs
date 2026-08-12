@@ -236,8 +236,9 @@ where
 
     /// Deliver a command through stable entity routing.
     ///
-    /// Dropping this future cancels only its bounded activation waiter. The
-    /// shared activation task remains owned by the directory.
+    /// Dropping this future cancels its command only while it remains a bounded
+    /// activation waiter. The shared activation task remains directory-owned,
+    /// and a command already moved into active delivery is not retracted.
     ///
     /// # Errors
     ///
