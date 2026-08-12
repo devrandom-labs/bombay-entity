@@ -9,7 +9,7 @@ Concrete items only: file path + one-line acceptance criterion. Take the top ope
    changed and `SelfLoop`/`Ignored` imply it did not. Acceptance: assertion fails if the
    `handles()` classification and reducer behavior diverge on phase change.
 
-2. **Allocation profile** — no allocation evidence exists (BASELINE.md gap). Add a dhat-based
+2. ~~Allocation profile~~ DONE (zero-alloc pinned) — no allocation evidence exists (BASELINE.md gap). Add a dhat-based
    test, e.g. `crates/entity/tests/allocations.rs`: dispatch+interpret on an active key stays
    under a recorded allocation ceiling. Acceptance: test fails when per-dispatch allocations
    grow; ceiling recorded in `.tighten/BASELINE.md`.

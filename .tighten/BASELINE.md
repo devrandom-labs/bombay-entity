@@ -56,3 +56,6 @@ in a worktree under identical current conditions vs final tree.
 | stale_absent_callbacks | ~84-88 ms (E24 pre-measure) | 36.98 ms | ~-57% |
 
 Verdict: maintain-or-improve satisfied under controlled conditions.
+
+## Allocation profile (2026-08-11, dhat)
+- active_hot_key dispatch+interpret: 0 blocks, 0 bytes per operation (pinned by crates/entity/tests/allocations.rs).
