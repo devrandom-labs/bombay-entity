@@ -271,3 +271,19 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   failed slot, and a retry performs a fresh activation. Removing the cleanup
   effect is killed by the retry assertion. All ten runtime tests and strict
   entity Clippy are green. Clean counter remains 0.
+
+## Fresh audit round 6 (post-E49, clean #1)
+- Completed the independent verification matrix across every lifecycle event
+  variant and behavior-distinct generation class, all six effects, all four
+  passivation outcomes, both fence failures, activation/delivery failure and
+  cancellation ownership, every protocol forwarding family, topology defects,
+  executor ownership outcomes, and composition forms.
+- Direct runtime tests now cover every public passivation and runtime-port
+  outcome; the 19-class bounded trace and directory regressions cover stale and
+  phase-specific lifecycle equivalence classes without duplicating them at the
+  facade. Exhaustion errors are structurally private counter terminal states and
+  retain direct formatting/ownership variants; no counterexample path warrants
+  a test-only production seam.
+- No further untested actionable high-value hypothesis emerged. Consecutive
+  clean counter: 1. The next audit switches to dependency, allocation, and
+  synchronization minimality.
