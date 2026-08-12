@@ -569,21 +569,33 @@ mod tests {
     fn check_trace(trace: &[Input]) {
         let mut machine = lifecycle_machine::<u8, u8, u8>();
         for input in trace {
+            let before = machine.state().phase();
             let (output, successor) = machine.step(event(*input));
-            if let TransitionEvidence::Traversed(edge) = output.evidence {
-                assert!(edge.is_declared());
-            }
-            if let TransitionEvidence::Ignored { .. } = output.evidence {
-                // An ignored input never changes state; the only effects it
-                // may emit are cleanup: rejections returning owned commands
-                // and retirement of stale incarnation leases.
-                assert!(
-                    output.effects.as_slice().iter().all(|effect| matches!(
-                        effect,
-                        SlotEffect::Reject { .. } | SlotEffect::Retire { .. }
-                    )),
-                    "ignored input produced non-cleanup effects"
-                );
+            let after = successor.state().phase();
+            match output.evidence {
+                TransitionEvidence::Traversed(edge) => {
+                    assert!(edge.is_declared());
+                    let (from, _, to) = edge.endpoints();
+                    assert_eq!((from, to), (before, after));
+                }
+                TransitionEvidence::SelfLoop { phase, .. } => {
+                    assert_eq!(phase, before);
+                    assert_eq!(before, after);
+                }
+                TransitionEvidence::Ignored { phase, .. } => {
+                    assert_eq!(phase, before);
+                    assert_eq!(before, after);
+                    // An ignored input never changes state; the only effects it
+                    // may emit are cleanup: rejections returning owned commands
+                    // and retirement of stale incarnation leases.
+                    assert!(
+                        output.effects.as_slice().iter().all(|effect| matches!(
+                            effect,
+                            SlotEffect::Reject { .. } | SlotEffect::Retire { .. }
+                        )),
+                        "ignored input produced non-cleanup effects"
+                    );
+                }
             }
             machine = successor;
         }
