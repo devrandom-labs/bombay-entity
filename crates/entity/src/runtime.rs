@@ -1,13 +1,13 @@
 //! Concise asynchronous API over the local entity directory.
 
-use std::future::Future;
+use std::mem;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, Poll, Waker};
 
 use crate::{
     ActivationId, DirectoryConfig, DirectoryError, DispatchId, DrainFailure, DrainStage,
-    EffectInterpreter, EntityId, LifecycleEdge, LocalDirectory, Refusal, RetirementMode,
+    EffectInterpreter, EntityId, LifecyclePhase, LocalDirectory, Refusal, RetirementMode,
     TransitionEvidence,
 };
 
@@ -20,12 +20,27 @@ pub struct Activated<E, L> {
 }
 
 /// Stage at which an ordered fence operation failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FenceFailure {
     /// The fence was not enqueued.
+    #[error("fence was not enqueued")]
     Enqueue,
     /// The fence was enqueued but not acknowledged.
+    #[error("fence was enqueued but not acknowledged")]
     Acknowledgement,
+}
+
+/// Outcome of one [`EntityRuntime::passivate`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Passivation {
+    /// Admission was closed at this call's lifecycle linearization point.
+    Begun,
+    /// No active incarnation exists to passivate.
+    NotActive,
+    /// A passivation was already in progress for the exact incarnation.
+    AlreadyPassivating,
+    /// The observed incarnation was superseded before the drain linearized.
+    Superseded,
 }
 
 /// Runtime port implemented once by an actor runtime integration.
@@ -41,6 +56,12 @@ pub trait LocalEntityRuntime<I, C>: Send + Sync + 'static {
     type ActivationError: Send + 'static;
 
     /// Spawn work owned by the entity directory rather than a caller.
+    ///
+    /// The spawned task MUST be driven to completion: every lifecycle task
+    /// ends by submitting its typed fact back through the directory. Dropping
+    /// or canceling a task strands the entity — an activation task wedges the
+    /// slot in `Activating`, a delivery task wedges a drain, and a retirement
+    /// task leaks the directory entry.
     fn spawn(&self, task: impl Future<Output = ()> + Send + 'static);
 
     /// Prepare and transactionally activate an exact incarnation.
@@ -72,18 +93,21 @@ pub trait LocalEntityRuntime<I, C>: Send + Sync + 'static {
 }
 
 /// Failure from [`EntityRuntime::dispatch`] with command ownership preserved.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum DispatchFailure<C> {
     /// Lifecycle admission or delivery refused the command.
+    #[error("lifecycle admission or delivery refused the command")]
     Refused {
         /// Original command.
         command: C,
         /// Exact refusal classification.
         reason: Refusal,
     },
-    /// The non-reusable activation identity namespace was exhausted.
+    /// The non-reusable activation identity namespace is exhausted.
+    #[error("activation identity namespace is exhausted")]
     ActivationIdsExhausted(C),
-    /// The non-reusable dispatch identity namespace was exhausted.
+    /// The non-reusable dispatch identity namespace is exhausted.
+    #[error("dispatch identity namespace is exhausted")]
     DispatchIdsExhausted(C),
 }
 
@@ -94,31 +118,59 @@ struct PendingCommand<C> {
 
 struct Completion<C>(Mutex<CompletionState<C>>);
 
-struct CompletionState<C> {
-    result: Option<Result<(), DispatchFailure<C>>>,
-    waker: Option<Waker>,
+enum CompletionState<C> {
+    Awaiting { waker: Option<Waker> },
+    Ready(Result<(), DispatchFailure<C>>),
+    Consumed,
 }
 
 impl<C> Completion<C> {
     fn new() -> Self {
-        Self(Mutex::new(CompletionState {
-            result: None,
-            waker: None,
-        }))
+        Self(Mutex::new(CompletionState::Awaiting { waker: None }))
     }
 
     fn complete(&self, result: Result<(), DispatchFailure<C>>) {
         let waker = {
             let mut state = self.0.lock().expect("completion lock poisoned");
-            if state.result.is_some() {
-                return;
+            match &mut *state {
+                CompletionState::Awaiting { .. } => {
+                    match mem::replace(&mut *state, CompletionState::Ready(result)) {
+                        CompletionState::Awaiting { waker } => waker,
+                        _ => None,
+                    }
+                }
+                CompletionState::Ready(_) | CompletionState::Consumed => return,
             }
-            state.result = Some(result);
-            state.waker.take()
         };
         if let Some(waker) = waker {
             waker.wake();
         }
+    }
+
+    /// Take the delivered result, or register the waker while still awaiting.
+    fn poll_take(&self, waker: &Waker) -> Option<Result<(), DispatchFailure<C>>> {
+        let mut state = self.0.lock().expect("completion lock poisoned");
+        match &mut *state {
+            CompletionState::Ready(_) => {
+                match mem::replace(&mut *state, CompletionState::Consumed) {
+                    CompletionState::Ready(result) => Some(result),
+                    _ => None,
+                }
+            }
+            CompletionState::Awaiting { waker: stored } => {
+                *stored = Some(waker.clone());
+                None
+            }
+            CompletionState::Consumed => None,
+        }
+    }
+
+    /// Whether a delivered result was already consumed by the waiter.
+    fn is_consumed(&self) -> bool {
+        matches!(
+            *self.0.lock().expect("completion lock poisoned"),
+            CompletionState::Consumed
+        )
     }
 }
 
@@ -162,9 +214,9 @@ where
     /// Returns [`DirectoryError::InvalidShardCount`] for a shard count that is
     /// not a power of two.
     pub fn new(config: DirectoryConfig, actor_runtime: R) -> Result<Self, DirectoryError<C>> {
-        let directory: LocalDirectory<I, PendingCommand<C>, R::Endpoint, R::Lease> =
-            LocalDirectory::<I, PendingCommand<C>, R::Endpoint, R::Lease>::new(config).map_err(
-                |error| match error {
+        let directory =
+            LocalDirectory::new(config).map_err(|error: DirectoryError<PendingCommand<C>>| {
+                match error {
                     DirectoryError::InvalidShardCount => DirectoryError::InvalidShardCount,
                     DirectoryError::ActivationIdsExhausted(pending) => {
                         DirectoryError::ActivationIdsExhausted(pending.command)
@@ -172,8 +224,8 @@ where
                     DirectoryError::DispatchIdsExhausted(pending) => {
                         DirectoryError::DispatchIdsExhausted(pending.command)
                     }
-                },
-            )?;
+                }
+            })?;
         Ok(Self {
             inner: Arc::new(Runtime {
                 directory,
@@ -184,8 +236,9 @@ where
 
     /// Deliver a command through stable entity routing.
     ///
-    /// Dropping this future cancels only its bounded activation waiter. The
-    /// shared activation task remains owned by the directory.
+    /// Dropping this future cancels its command only while it remains a bounded
+    /// activation waiter. The shared activation task remains directory-owned,
+    /// and a command already moved into active delivery is not retracted.
     ///
     /// # Errors
     ///
@@ -206,7 +259,7 @@ where
             command,
             completion: Arc::clone(&completion),
         };
-        let output = self
+        let dispatched = self
             .inner
             .directory
             .dispatch(entity_id.clone(), pending)
@@ -219,16 +272,17 @@ where
                     DispatchFailure::DispatchIdsExhausted(pending.command)
                 }
             })?;
-        let dispatch_id = output.dispatch_id.expect("dispatch has an identity");
-        let activation_id = output.activation_id;
-        self.inner.directory.interpret(output, &self.inner);
+        let dispatch_id = dispatched.dispatch_id;
+        let activation_id = dispatched.output.activation_id;
+        self.inner
+            .directory
+            .interpret(dispatched.output, &self.inner);
         DispatchWait {
             completion,
             entity_id,
             activation_id,
             dispatch_id,
             runtime: Arc::downgrade(&self.inner),
-            completed: false,
         }
         .await
     }
@@ -241,14 +295,24 @@ where
     /// # Panics
     ///
     /// Panics if directory synchronization was poisoned.
-    pub fn passivate(&self, entity_id: &EntityId<I>) -> bool {
+    pub fn passivate(&self, entity_id: &EntityId<I>) -> Passivation {
         let Some(activation_id) = self.inner.directory.current_activation(entity_id) else {
-            return false;
+            return Passivation::NotActive;
         };
         let output = self.inner.directory.begin_drain(entity_id, activation_id);
-        let started = output.evidence == TransitionEvidence::Traversed(LifecycleEdge::BeginDrain);
+        let passivation = match output.evidence {
+            TransitionEvidence::Traversed(_) => Passivation::Begun,
+            TransitionEvidence::SelfLoop { phase, .. }
+            | TransitionEvidence::Ignored { phase, .. } => match phase {
+                LifecyclePhase::Active => Passivation::Superseded,
+                LifecyclePhase::Draining | LifecyclePhase::Retiring => {
+                    Passivation::AlreadyPassivating
+                }
+                LifecyclePhase::Inactive | LifecyclePhase::Activating => Passivation::NotActive,
+            },
+        };
         self.inner.directory.interpret(output, &self.inner);
-        started
+        passivation
     }
 }
 
@@ -263,7 +327,6 @@ where
     activation_id: Option<ActivationId>,
     dispatch_id: DispatchId,
     runtime: Weak<Runtime<I, C, R>>,
-    completed: bool,
 }
 
 impl<I, C, R> Unpin for DispatchWait<I, C, R>
@@ -282,21 +345,10 @@ where
 {
     type Output = Result<(), DispatchFailure<C>>;
 
-    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        let result = {
-            let mut state = self.completion.0.lock().expect("completion lock poisoned");
-            if let Some(result) = state.result.take() {
-                Some(result)
-            } else {
-                state.waker = Some(context.waker().clone());
-                None
-            }
-        };
-        if let Some(result) = result {
-            self.completed = true;
-            Poll::Ready(result)
-        } else {
-            Poll::Pending
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.completion.poll_take(context.waker()) {
+            Some(result) => Poll::Ready(result),
+            None => Poll::Pending,
         }
     }
 }
@@ -308,7 +360,7 @@ where
     R: LocalEntityRuntime<I, C>,
 {
     fn drop(&mut self) {
-        if self.completed {
+        if self.completion.is_consumed() {
             return;
         }
         if let Some(runtime) = self.runtime.upgrade()
@@ -344,7 +396,10 @@ where
                     activated.endpoint,
                     activated.lease,
                 ),
-                Err(_) => runtime
+                // The finalized lifecycle algebra consumes only the fact of
+                // failure; the typed activation error is the actor runtime's
+                // own diagnostic boundary and is deliberately not propagated.
+                Err(_activation_error) => runtime
                     .directory
                     .activation_failed(&entity_id, activation_id),
             };

@@ -56,17 +56,22 @@ impl ValidatedTopology {
 }
 
 /// Structural defect found in a topology.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TopologyError {
     /// Two vertices have the same identity.
+    #[error("two vertices share an identity")]
     DuplicateVertex(VertexId),
-    /// Two edges have identical typed endpoints and trigger.
+    /// Two edges share a source vertex and trigger.
+    #[error("two transitions share a source and trigger")]
     DuplicateTransition(Transition),
     /// The initial identity is not a declared vertex.
+    #[error("initial identity is not a declared vertex")]
     UnknownInitial(VertexId),
     /// An edge refers to an undeclared vertex.
+    #[error("transition refers to an undeclared vertex")]
     UnknownVertex(VertexId),
     /// A declared vertex cannot be reached from the initial vertex.
+    #[error("declared vertex is unreachable from the initial vertex")]
     UnreachableVertex(VertexId),
 }
 
@@ -332,9 +337,6 @@ pub enum Either<L, R> {
 /// Sum composition routing each alternative to its corresponding machine.
 pub struct Routed<A, B>(A, B);
 
-/// Compatibility name for [`Routed`].
-pub type Choice<A, B> = Routed<A, B>;
-
 impl<A, B> Machine for Routed<A, B>
 where
     A: Machine,
@@ -365,9 +367,36 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
+
     use super::{
-        Base, Compose, Machine, Structure, Topology, Transition, TriggerId, Vertex, VertexId,
+        Base, Compose, Machine, Structure, Topology, TopologyError, Transition, TriggerId, Vertex,
+        VertexId,
     };
+
+    #[test]
+    fn topology_error_reports_each_defect() {
+        assert_eq!(
+            TopologyError::DuplicateVertex(READY).to_string(),
+            "two vertices share an identity"
+        );
+        assert_eq!(
+            TopologyError::UnknownInitial(READY).to_string(),
+            "initial identity is not a declared vertex"
+        );
+        assert_eq!(
+            TopologyError::UnknownVertex(READY).to_string(),
+            "transition refers to an undeclared vertex"
+        );
+        assert_eq!(
+            TopologyError::UnreachableVertex(READY).to_string(),
+            "declared vertex is unreachable from the initial vertex"
+        );
+        assert_eq!(
+            TopologyError::DuplicateTransition(EDGES[0]).to_string(),
+            "two transitions share a source and trigger"
+        );
+    }
 
     const READY: VertexId = VertexId(0);
     const VERTICES: &[Vertex] = &[Vertex {

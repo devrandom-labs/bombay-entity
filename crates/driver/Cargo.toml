@@ -1,6 +1,6 @@
 [package]
 name = "bombay-machine-executor"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,8 +12,12 @@ categories = ["concurrency"]
 
 [dependencies]
 bombay-transition.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+loom = "0.7.2"
+
+[target.'cfg(loom)'.dependencies]
 loom = "0.7.2"
 
 [lints]

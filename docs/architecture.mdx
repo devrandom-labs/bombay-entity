@@ -39,15 +39,16 @@ must never wrap. Exhaustion is an explicit runtime failure. Inactive entities
 are normally absent from the directory, preventing memory use from growing with
 every entity ever addressed.
 
-Each directory value is an `Arc<Slot>`. A delayed result may change or remove an
-entry only when both conditions hold:
+Each directory value is an `Arc<Slot>`. Slot pointer identity is the sole
+authority for removing a map binding: removal succeeds only while the current
+map value is the same slot allocation captured by the lifecycle effect. One
+slot allocation is never reused for another activation, so a delayed removal
+cannot delete a replacement binding.
 
-1. the current map value is the same slot allocation; and
-2. the slot still contains the same activation ID.
-
-Slot identity prevents removal after map replacement. Activation identity
-prevents delayed activation, completion, passivation, or termination events
-from affecting a newer incarnation.
+Activation identity has a separate authority inside that slot's lifecycle
+machine. It prevents delayed activation, completion, passivation, or
+termination facts from changing the state of a different incarnation. It is
+not a second map-removal condition.
 
 ## Application and incarnation ports
 
@@ -158,14 +159,20 @@ first dispatch claims Activating(g)
     -> directory commits Active(g, endpoint, lease)
 ```
 
-Dropping a dispatch future drops its command and releases only its waiter seat.
-It does not cancel shared activation. A waiter is never transferred silently to
-a later activation ID and the runtime never retries its command automatically.
+Dropping a dispatch future while its command is still a bounded activation
+waiter drops that command and releases only its waiter seat. It does not cancel
+shared activation. Once active-delivery ownership has linearized and moved the
+command into a spawned delivery task, dropping the waiting future does not
+retract that delivery. A waiter is never transferred silently to a later
+activation ID and the runtime never retries its command automatically.
 
 The directory-owned task must clean up preparation failure, incarnation
-activation failure, stale validation, directory shutdown, panic, and task
-cancellation. No terminal path may strand an `Activating` slot or leak an
-incarnation lease.
+activation failure, and stale validation by submitting the corresponding typed
+fact. Panic and task cancellation cannot be cleaned up by the task itself;
+the runtime port's `spawn` contract therefore requires driving every spawned
+task to completion, and a runtime that cannot guarantee this must treat task
+loss as a supervisor-level concern. No graceful terminal path may strand an
+`Activating` slot or leak an incarnation lease.
 
 ## Slot state machine
 
@@ -228,35 +235,34 @@ Inactive
   -> Activating(activation_id)
   -> Active(activation_id, incarnation)
   -> Draining(activation_id)
+  -> Retiring(activation_id)
   -> Inactive
 ```
 
-Internally, inactive normally means absence from the map:
+Internally, inactive normally means absence from the map. The implemented
+slot state is:
 
 ```text
 Activating {
     activation_id,
     bounded_waiters,
-    cancellation,
 }
 
 Active {
     activation_id,
     endpoint,
     lease,
-    reserved_dispatches,
-    last_activity,
+    reservations,
 }
 
 Draining {
     activation_id,
     endpoint,
     lease,
-    reserved_dispatches,
-    fence_state,
-    deadline,
+    drain_progress,
 }
 ```
+
 
 Every asynchronous result carries `EntityId` and `ActivationId`. All slot
 transitions validate both slot allocation and activation ID.
@@ -352,12 +358,12 @@ nor non-completion.
 
 Fence failures are explicit:
 
+The implemented failure classification is:
+
 ```rust
 enum FenceFailure {
-    EnqueueFailed,
-    AcknowledgementDeliveryFailed,
-    AcknowledgementTimeout,
-    IncarnationTerminated,
+    Enqueue,
+    Acknowledgement,
 }
 ```
 
@@ -400,7 +406,8 @@ facts. Observing an incarnation reports the terminal outcome of one activation
 ID. Observing an entity reports directory lifecycle without promising that a
 particular incarnation remains live.
 
-Telemetry publishes activation, admission rejection, draining, fence,
+Telemetry publication is design intent and is not yet implemented. When
+added, it publishes activation, admission rejection, draining, fence,
 passivation, forced retirement, failure, and stale-event facts. Telemetry grants
 no entity-control capability and is emitted after state transitions, outside
 locks.
@@ -416,34 +423,46 @@ locks.
 6. Graceful retirement begins only after fence acknowledgement.
 7. Forced retirement is separately classified and makes no false completion
    claim.
-8. Only matching slot identity and activation ID may transition or remove an
-   entry.
+8. Only matching activation identity may change exact-incarnation lifecycle
+   state, and only matching slot pointer identity may remove a map entry.
 9. Caller cancellation cannot cancel shared activation or strand slot state.
-10. Application, actor, telemetry, clock, and policy code never run under
-    directory locks.
+10. Lifecycle effect interpretation and actor-runtime, telemetry, clock, and
+    policy callbacks never run under directory locks. `Hash` first selects a
+    shard before locking; user-defined `Hash` and `Eq` then execute during
+    standard-map operations while the shard mutex is held and must not reenter
+    the same directory.
 
 ## Verification strategy
 
 The state machine, machine executor, directory, and runtime facade remain
 independent of Actorpass. Deterministic tests cover lifecycle decisions,
 command ownership, cancellation, reentrant interpretation, exact retirement,
-and the concise asynchronous API. The bounded trace test enumerates the finite
-event alphabet and compares every successor with the independent structural
-model while checking declared-edge evidence.
+and the concise asynchronous API. The bounded trace test enumerates 19
+behavior-distinct current/stale and success/failure input classes through depth
+four, comparing every successor with the independent structural model while
+checking declared-edge evidence and ignored-input cleanup effects.
 
-Four Loom models explore activation claim, delivery/drain ordering,
-slot-replacement removal, and cancellation/activation ownership interleavings.
+Five abstract Loom protocol models explore activation claim, delivery/drain
+ordering, slot-replacement removal, admission racing, and
+cancellation/activation ownership interleavings. A separate core-only model
+drives the real `LocalDirectory`, including its shard mutex, slot executor,
+identity allocation, activation commitment, and delivery effects. Two further
+non-panicking Loom models drive the real machine executors. Panic/poison behavior is exercised
+by deterministic real-executor regressions because unwinding through Loom's
+generator teardown can abort the verification process rather than report a
+modeled outcome.
 Retained stress tests exercise one hot identifier and many independent
 identifiers across shards. A byte-oriented fuzz target is not retained because
 there is no parser, unsafe code, or unconstrained input structure, and the pure
 finite transition alphabet is enumerated directly; Loom covers the concurrent
 nondeterminism that ordinary fuzzing would sample weakly.
 
-Miri is not available in the pinned Rust 1.96 Nix toolchain (`cargo miri`
-reports that no such command is installed). The implementation contains no
-`unsafe` blocks. The reproducible gates are workspace tests, strict all-target
-Clippy, the retained Loom and stress tests, both benchmarks, LLVM coverage, and
-all eight flake checks.
+Stable Rust 1.96 remains the production, test, lint, documentation, coverage,
+and benchmark toolchain. A separate Fenix-locked 2026-08-05 nightly runs Miri
+over all three crates' library suites with leak detection enabled. The native
+gate retains the 137,561-trace exhaustive test and the deliberately leaked
+synthetic `'static` topology fixture; Miri interprets the remaining 27 tests.
+The implementation contains no `unsafe` blocks.
 
 ## Research basis
 
@@ -456,28 +475,28 @@ waiter cancellation during activation, delivery racing with passivation, stale
 activation and termination completions, and bounded drain failure. Lookup is
 expected to be short relative to activation, mailbox enqueue, and retirement.
 
-The first implementation uses a fixed power-of-two array of
+The implementation uses a fixed power-of-two array of
 `Mutex<HashMap<EntityId<I>, Arc<Slot>>>` shards and a separate `Mutex` in each
-slot. A hash selects exactly one shard. The shard lock only finds, inserts, or
-conditionally removes an `Arc`; the slot lock only submits one fact to the pure
-lifecycle machine and installs its successor. Neither lock is held while an
-effect is interpreted. Poisoning is treated as an invariant violation rather
-than silently exposing partially updated state.
+slot. The configured build-hasher first selects the shard, then the standard
+map hashes the identifier for lookup, insertion, or removal. The shard lock only
+finds, inserts, or conditionally removes an `Arc`; the slot lock only submits
+one fact to the pure lifecycle machine and installs its successor. Neither lock
+is held while an effect is interpreted. Poisoning is treated as an invariant
+violation rather than silently exposing partially updated state.
 
 This is a measured baseline, not an assertion that locks always outperform
 specialized maps. Shalev and Shavit's split-ordered lists provide lock-free
 expected-constant-time growth, and Maier, Sanders, and Dementiev demonstrate
 the importance of layout and workload when comparing concurrent hash tables.
 Those algorithms require substantially more resizing and reclamation machinery.
-Rust's standard `HashMap` already supplies a cache-conscious SwissTable lookup
-layout, while `Arc` safely delays slot reclamation until every operation drops
-its reference. Epoch or hazard-pointer reclamation therefore adds no required
-correctness property at this stage. A different table is justified only by
-retained directory benchmarks showing shard lookup or resize contention is
-material under the stated workloads.
+`Arc` safely delays slot reclamation until every operation drops its reference.
+Epoch or hazard-pointer reclamation therefore adds no required correctness
+property at this stage. A prehashed `hashbrown` candidate improved hot-key and
+contention workloads but was rejected when final alternating validation found
+an independent-key regression beyond the declared 5% decision band.
 
-Rust 1.96 provides `Arc`, `Mutex`, `HashMap`, and lock-free `AtomicU64` on the
-supported 64-bit targets. Activation and dispatch sequences use relaxed atomic
+Rust 1.96 provides `HashMap`, `Arc`, `Mutex`, and lock-free `AtomicU64` on the supported
+64-bit targets. Activation and dispatch sequences use relaxed atomic
 increments because uniqueness depends only on each atomic modification order;
 slot mutexes establish the state-transition happens-before relationships.
 Sequence wrap is rejected rather than reused, preventing an ABA-like identity.
@@ -498,8 +517,9 @@ The directory linearization points refine the lifecycle points above:
    ordered effect queue. Follow-up facts append effects through the same path,
    so reentrancy cannot start a second interpreter.
 5. **Removal:** while holding the shard lock, removal occurs only if
-   `Arc::ptr_eq` matches the captured slot and the slot still represents the
-   requested activation identity. A caller that already cloned the old `Arc`
+   `Arc::ptr_eq` matches the captured slot. Pointer identity is the exact
+   removal authority because one slot allocation never serves a second
+   activation. A caller that already cloned the old `Arc`
    remains memory-safe but cannot mutate a replacement entry.
 
 Primary sources considered are:
@@ -517,35 +537,45 @@ Primary sources considered are:
   Composable Representable Executable Machines,” 2023,
   <https://arxiv.org/abs/2307.09090>.
 
-The standard-library capability check uses the Rust 1.96 documentation for
+The capability check uses the Rust 1.96 documentation for
 [`std::sync`](https://doc.rust-lang.org/1.96.0/std/sync/index.html),
 [`AtomicU64`](https://doc.rust-lang.org/1.96.0/std/sync/atomic/type.AtomicU64.html),
-and [`HashMap`](https://doc.rust-lang.org/1.96.0/std/collections/struct.HashMap.html).
+and [`BuildHasher`](https://doc.rust-lang.org/1.96.0/std/hash/trait.BuildHasher.html).
 
 ### Baseline measurements
 
 `crates/entity/benches/directory.rs` is a dependency-free retained benchmark
 that measures a hot activating slot, a hot active incarnation with synchronous
 delivery resolution, insertion of independent identifiers, and eight-thread
-contention on one active incarnation. On 2026-08-11, an Apple
-M4 Pro running Darwin 25.5.0 and the Rust 1.96 release profile produced:
+contention on one active incarnation. On 2026-08-12, an Apple
+M4 Pro running Darwin 25.5.0 and the Rust 1.96 release profile produced the
+following current-tree minimum and median over seven repetitions:
 
 ```text
 iterations=1000000
-activating_hot_key=105.417334ms
-active_hot_key=207.461292ms
+repetitions=7
+activating_hot_key_min=70.790583ms
+activating_hot_key_median=71.030000ms
+active_hot_key_min=139.130333ms
+active_hot_key_median=139.617208ms
 independent_iterations=100000
-independent_keys=31.009ms
+independent_keys_min=15.070541ms
+independent_keys_median=16.143541ms
 threads=8
 contended_iterations_per_thread=100000
-contended_active_key=279.07625ms
+contended_active_key_min=237.556625ms
+contended_active_key_median=240.087708ms
+stale_absent_callbacks_min=38.056333ms
+stale_absent_callbacks_median=38.157958ms
 ```
 
-These correspond to about 105.4 ns per activating-slot submission, 207.5 ns per
-active delivery and resolution, 310.1 ns per new independent slot, and 348.8 ns
-per contended active delivery and resolution. Every lifecycle output is
-interpreted, so the benchmark does not accumulate a synthetic pending-effect
-backlog. These are regression baselines, not cross-machine comparisons.
+The minimums correspond to about 70.8 ns per activating-slot submission, 139.1
+ns per active delivery and resolution, 150.7 ns per new independent slot, and
+297.0 ns per contended active delivery and resolution. Every lifecycle output
+is interpreted, so the benchmark does not accumulate a synthetic pending-effect
+backlog. These dated current-tree measurements are regression references, not
+cross-machine comparisons; the controlled baseline comparison is retained in
+`.tighten/BASELINE.md`.
 
 - [Orleans grain directory](https://learn.microsoft.com/en-us/dotnet/orleans/host/grain-directory)
 - [Orleans virtual actor technical report](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Orleans-MSR-TR-2014-41.pdf)

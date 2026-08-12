@@ -94,11 +94,13 @@ fn complete(completion: &TurnCompletion, outcome: TurnOutcome) {
         .outcome
         .lock()
         .expect("turn receipt lock poisoned") = Some(outcome);
-    completion.ready.notify_all();
+    // wait(self) consumes the receipt, so at most one waiter exists.
+    completion.ready.notify_one();
 }
 
 /// Rejection of an input after a serialized executor was poisoned.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("executor was poisoned by a previous panic")]
 pub struct PoisonedInput<I>(
     /// Input whose ownership was not accepted.
     pub I,
@@ -112,8 +114,17 @@ pub struct SerializedExecutor<M: Machine> {
 struct SerializedExecution<M: Machine> {
     machine: Option<M>,
     inputs: VecDeque<(M::Input, Arc<TurnCompletion>)>,
-    running: bool,
-    poisoned: bool,
+    turn: TurnState,
+}
+
+/// Ownership phase of the serialized turn drain.
+enum TurnState {
+    /// No caller is draining turns.
+    Idle,
+    /// One caller owns the drain loop.
+    Running,
+    /// A transition or handler panic poisoned the executor.
+    Poisoned,
 }
 
 impl<M: Machine> SerializedExecutor<M> {
@@ -124,8 +135,7 @@ impl<M: Machine> SerializedExecutor<M> {
             execution: Mutex::new(SerializedExecution {
                 machine: Some(machine),
                 inputs: VecDeque::new(),
-                running: false,
-                poisoned: false,
+                turn: TurnState::Idle,
             }),
         }
     }
@@ -134,8 +144,11 @@ impl<M: Machine> SerializedExecutor<M> {
     ///
     /// Reentrant and concurrent calls enqueue their input and return a receipt;
     /// they never advance a transition while an earlier output is being handled.
-    /// Waiting on a receipt from inside `handler` would deadlock and must be
-    /// deferred until the outer turn returns.
+    /// Only the drain owner's `handler` processes outputs: a caller that loses
+    /// ownership has its input handled by the owner's handler, while its
+    /// receipt still reports completion of its own turn. Waiting on a receipt
+    /// from inside `handler` would deadlock and must be deferred until the
+    /// outer turn returns.
     ///
     /// # Errors
     ///
@@ -159,15 +172,17 @@ impl<M: Machine> SerializedExecutor<M> {
         });
         let owns = {
             let mut execution = self.execution.lock().expect("executor lock poisoned");
-            if execution.poisoned {
-                return Err(PoisonedInput(input));
-            }
-            execution.inputs.push_back((input, Arc::clone(&completion)));
-            if execution.running {
-                false
-            } else {
-                execution.running = true;
-                true
+            match execution.turn {
+                TurnState::Poisoned => return Err(PoisonedInput(input)),
+                TurnState::Running => {
+                    execution.inputs.push_back((input, Arc::clone(&completion)));
+                    false
+                }
+                TurnState::Idle => {
+                    execution.inputs.push_back((input, Arc::clone(&completion)));
+                    execution.turn = TurnState::Running;
+                    true
+                }
             }
         };
         if owns {
@@ -195,34 +210,35 @@ impl<M: Machine> SerializedExecutor<M> {
 }
 
 struct SerializedOwnership<'a, M: Machine> {
-    execution: &'a Mutex<SerializedExecution<M>>,
+    execution: Option<&'a Mutex<SerializedExecution<M>>>,
     active: Option<Arc<TurnCompletion>>,
-    armed: bool,
 }
 
 impl<'a, M: Machine> SerializedOwnership<'a, M> {
     fn new(execution: &'a Mutex<SerializedExecution<M>>) -> Self {
         Self {
-            execution,
+            execution: Some(execution),
             active: None,
-            armed: true,
         }
     }
 
     fn take_turn(&mut self) -> Option<(M, M::Input, Arc<TurnCompletion>)> {
-        let mut execution = self.execution.lock().expect("executor lock poisoned");
-        let Some((input, completion)) = execution.inputs.pop_front() else {
-            execution.running = false;
-            self.armed = false;
+        let execution = self.execution?;
+        let mut state = execution.lock().expect("executor lock poisoned");
+        let Some((input, completion)) = state.inputs.pop_front() else {
+            state.turn = TurnState::Idle;
+            // Normal exhaustion disarms the guard: dropping it must not poison.
+            self.execution = None;
             return None;
         };
-        let machine = execution.machine.take().expect("executor machine missing");
+        let machine = state.machine.take().expect("executor machine missing");
         self.active = Some(Arc::clone(&completion));
         Some((machine, input, completion))
     }
 
     fn install(&self, machine: M, completion: &Arc<TurnCompletion>) {
         self.execution
+            .expect("ownership armed")
             .lock()
             .expect("executor lock poisoned")
             .machine = Some(machine);
@@ -239,19 +255,17 @@ impl<'a, M: Machine> SerializedOwnership<'a, M> {
 
 impl<M: Machine> Drop for SerializedOwnership<'_, M> {
     fn drop(&mut self) {
-        if !self.armed {
+        let Some(execution) = self.execution.take() else {
             return;
-        }
-        let mut execution = self
-            .execution
+        };
+        let mut state = execution
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        execution.running = false;
-        execution.poisoned = true;
+        state.turn = TurnState::Poisoned;
         if let Some(active) = self.active.take() {
             complete(&active, TurnOutcome::Poisoned);
         }
-        execution
+        state
             .inputs
             .drain(..)
             .for_each(|(_, receipt)| complete(&receipt, TurnOutcome::Poisoned));
@@ -269,10 +283,23 @@ where
 }
 
 struct LinearizedExecution<M, O, E> {
-    machine: Option<M>,
+    machine: LinearizedMachine<M>,
     outputs: VecDeque<O>,
     evidence: Option<E>,
-    dispatching: bool,
+    dispatch: DispatchState,
+}
+
+enum LinearizedMachine<M> {
+    Ready(M),
+    Poisoned,
+}
+
+/// Ownership phase of output dispatch.
+enum DispatchState {
+    /// No caller is dispatching queued outputs.
+    Idle,
+    /// One caller owns output dispatch.
+    Dispatching,
 }
 
 impl<M> LinearizedExecutor<M>
@@ -286,10 +313,10 @@ where
     pub fn new(machine: M) -> Self {
         Self {
             execution: Mutex::new(LinearizedExecution {
-                machine: Some(machine),
+                machine: LinearizedMachine::Ready(machine),
                 outputs: VecDeque::new(),
                 evidence: None,
-                dispatching: false,
+                dispatch: DispatchState::Idle,
             }),
         }
     }
@@ -302,11 +329,15 @@ where
     /// the affine machine state.
     pub fn submit(&self, input: M::Input) -> <M::Output as OutputEvidence>::Evidence {
         let mut execution = self.execution.lock().expect("executor lock poisoned");
-        let machine = execution.machine.take().expect("executor machine missing");
+        let LinearizedMachine::Ready(machine) =
+            core::mem::replace(&mut execution.machine, LinearizedMachine::Poisoned)
+        else {
+            panic!("executor machine poisoned");
+        };
         let (output, successor) = machine.step(input);
         let evidence = output.evidence();
         execution.evidence = Some(evidence.clone());
-        execution.machine = Some(successor);
+        execution.machine = LinearizedMachine::Ready(successor);
         execution.outputs.push_back(output);
         evidence
     }
@@ -317,10 +348,7 @@ where
     ///
     /// Panics if executor synchronization was poisoned.
     #[must_use]
-    pub fn evidence(&self) -> Option<<M::Output as OutputEvidence>::Evidence>
-    where
-        <M::Output as OutputEvidence>::Evidence: Clone,
-    {
+    pub fn evidence(&self) -> Option<<M::Output as OutputEvidence>::Evidence> {
         self.execution
             .lock()
             .expect("executor lock poisoned")
@@ -330,63 +358,64 @@ where
 
     /// Dispatch queued outputs until empty, or contribute them to another owner.
     ///
-    /// A return value of `false` means another caller owns dispatch and this
-    /// call is fire-and-forget; it does not mean the caller's output completed.
-    /// If a handler panics, its owned output is dropped exactly once and a later
-    /// call resumes with the remaining queue.
-    pub fn dispatch_pending<H>(&self, handler: &H) -> bool
+    /// [`DispatchOutcome::OwnedElsewhere`] means another caller owns dispatch
+    /// and this call is fire-and-forget; it does not mean the caller's output
+    /// completed. If a handler panics, its owned output is dropped exactly once
+    /// and a later call resumes with the remaining queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if executor synchronization was poisoned by a transition panic
+    /// in [`LinearizedExecutor::submit`].
+    pub fn dispatch_pending<H>(&self, handler: &H) -> DispatchOutcome
     where
         H: OutputHandler<M::Output>,
     {
-        let mut ownership = DispatchOwnership::acquire(&self.execution);
-        if !ownership.acquired {
-            return false;
-        }
+        let Some(mut ownership) = DispatchOwnership::acquire(&self.execution) else {
+            return DispatchOutcome::OwnedElsewhere;
+        };
         while let Some(output) = ownership.next() {
             handler.handle(output);
         }
-        true
+        DispatchOutcome::Drained
     }
+}
+
+/// Ownership result of one [`LinearizedExecutor::dispatch_pending`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    /// This call owned dispatch and drained the output queue.
+    Drained,
+    /// Another caller owns dispatch; queued outputs will be handled there.
+    OwnedElsewhere,
 }
 
 struct DispatchOwnership<'a, M, O, E> {
-    execution: &'a Mutex<LinearizedExecution<M, O, E>>,
-    acquired: bool,
+    execution: Option<&'a Mutex<LinearizedExecution<M, O, E>>>,
 }
 
 impl<'a, M, O, E> DispatchOwnership<'a, M, O, E> {
-    fn acquire(execution: &'a Mutex<LinearizedExecution<M, O, E>>) -> Self {
-        let acquired = {
-            let mut state = execution.lock().expect("executor lock poisoned");
-            if state.dispatching {
-                false
-            } else {
-                state.dispatching = true;
-                true
+    fn acquire(execution: &'a Mutex<LinearizedExecution<M, O, E>>) -> Option<Self> {
+        let mut state = execution.lock().expect("executor lock poisoned");
+        match state.dispatch {
+            DispatchState::Dispatching => None,
+            DispatchState::Idle => {
+                state.dispatch = DispatchState::Dispatching;
+                Some(Self {
+                    execution: Some(execution),
+                })
             }
-        };
-        Self {
-            execution,
-            acquired,
-        }
-    }
-
-    fn release(&mut self) {
-        if self.acquired {
-            self.execution
-                .lock()
-                .expect("executor lock poisoned")
-                .dispatching = false;
-            self.acquired = false;
         }
     }
 
     fn next(&mut self) -> Option<O> {
-        let mut state = self.execution.lock().expect("executor lock poisoned");
+        let execution = self.execution?;
+        let mut state = execution.lock().expect("executor lock poisoned");
         let output = state.outputs.pop_front();
         if output.is_none() {
-            state.dispatching = false;
-            self.acquired = false;
+            state.dispatch = DispatchState::Idle;
+            // An exhausted queue releases ownership; dropping must not repeat it.
+            self.execution = None;
         }
         output
     }
@@ -394,7 +423,16 @@ impl<'a, M, O, E> DispatchOwnership<'a, M, O, E> {
 
 impl<M, O, E> Drop for DispatchOwnership<'_, M, O, E> {
     fn drop(&mut self) {
-        self.release();
+        if let Some(execution) = self.execution.take() {
+            // This drop can run while its own `next` unwinds after another
+            // thread poisoned the executor; a second panic here would abort
+            // the process. Recovering the guard preserves the documented
+            // panic-only contract.
+            execution
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .dispatch = DispatchState::Idle;
+        }
     }
 }
 
@@ -407,6 +445,7 @@ mod tests {
 
     use super::{
         LinearizedExecutor, OutputEvidence, OutputHandler, SerializedExecutor, TurnOutcome,
+        TurnReceipt,
     };
 
     const VERTICES: &[Vertex] = &[Vertex {
@@ -434,6 +473,14 @@ mod tests {
         Base::new(0, TOPOLOGY.validated().unwrap(), |state, input| {
             (Output(input), state + input)
         })
+    }
+
+    #[test]
+    fn poisoned_input_reports_the_rejection() {
+        assert_eq!(
+            super::PoisonedInput(7_u8).to_string(),
+            "executor was poisoned by a previous panic"
+        );
     }
 
     #[test]
@@ -499,7 +546,10 @@ mod tests {
             .is_err()
         );
         let seen = Mutex::new(Vec::new());
-        assert!(executor.dispatch_pending(&|output: Output| seen.lock().unwrap().push(output.0)));
+        assert_eq!(
+            executor.dispatch_pending(&|output: Output| seen.lock().unwrap().push(output.0)),
+            super::DispatchOutcome::Drained
+        );
         assert_eq!(*seen.lock().unwrap(), [2]);
     }
 
@@ -516,6 +566,114 @@ mod tests {
             panic!("poisoned executor accepted input")
         };
         assert_eq!(rejected.0, 2);
+    }
+
+    struct ReentrantPoisonHandler {
+        executor: Weak<SerializedExecutor<TestMachine>>,
+        queued: Mutex<Option<TurnReceipt>>,
+    }
+
+    impl OutputHandler<Output> for ReentrantPoisonHandler {
+        fn handle(&self, output: Output) {
+            if output.0 == 1 {
+                let receipt = self.executor.upgrade().unwrap().submit(2, self).unwrap();
+                *self.queued.lock().unwrap() = Some(receipt);
+                panic!("handler");
+            }
+        }
+    }
+
+    #[test]
+    fn serialized_handler_panic_resolves_queued_receipt_as_poisoned() {
+        fn transition(state: u8, input: u8) -> (Output, u8) {
+            (Output(input), state + input)
+        }
+        let executor = Arc::new(SerializedExecutor::new(Base::new(
+            0,
+            TOPOLOGY.validated().unwrap(),
+            transition as fn(u8, u8) -> (Output, u8),
+        )));
+        let handler = ReentrantPoisonHandler {
+            executor: Arc::downgrade(&executor),
+            queued: Mutex::new(None),
+        };
+
+        assert!(catch_unwind(AssertUnwindSafe(|| executor.submit(1, &handler))).is_err());
+        let queued = handler.queued.lock().unwrap().take().unwrap();
+        assert_eq!(queued.outcome(), Some(TurnOutcome::Poisoned));
+        assert_eq!(queued.wait(), TurnOutcome::Poisoned);
+        assert!(matches!(
+            executor.submit(3, &handler),
+            Err(super::PoisonedInput(3))
+        ));
+    }
+
+    impl super::OutputEvidence for usize {
+        type Evidence = usize;
+
+        fn evidence(&self) -> Self::Evidence {
+            *self
+        }
+    }
+
+    #[test]
+    fn dispatch_guard_drop_recovers_during_poison_unwind() {
+        use std::sync::Condvar;
+        use std::thread;
+
+        let machine = Base::new(0_usize, TOPOLOGY.validated().unwrap(), |state, input| {
+            assert_ne!(input, 9, "transition failure");
+            (input, state + input)
+        });
+        let executor = Arc::new(LinearizedExecutor::new(machine));
+        assert_eq!(executor.submit(1), 1);
+        let gate = Arc::new((Mutex::new((false, false)), Condvar::new()));
+
+        let dispatcher = {
+            let executor = Arc::clone(&executor);
+            let gate = Arc::clone(&gate);
+            thread::spawn(move || {
+                catch_unwind(AssertUnwindSafe(|| {
+                    executor.dispatch_pending(&|_output| {
+                        let (lock, ready) = &*gate;
+                        let mut phase = lock.lock().unwrap();
+                        phase.0 = true;
+                        ready.notify_one();
+                        // Hold dispatch ownership until the transition panic
+                        // has landed; returning loops into next(), which then
+                        // observes the poisoned executor.
+                        while !phase.1 {
+                            phase = ready.wait(phase).unwrap();
+                        }
+                    });
+                }))
+            })
+        };
+        {
+            let (lock, ready) = &*gate;
+            let mut phase = lock.lock().unwrap();
+            while !phase.0 {
+                phase = ready.wait(phase).unwrap();
+            }
+        }
+        // The dispatcher holds dispatch ownership inside the handler; this
+        // transition panic poisons the executor underneath it.
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            executor.submit(9);
+        }));
+        {
+            let (lock, ready) = &*gate;
+            *lock.lock().unwrap() = (true, true);
+            ready.notify_one();
+        }
+        let outcome = dispatcher.join().expect("dispatcher thread aborted");
+        assert!(outcome.is_err(), "next() must observe the poisoned lock");
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                executor.submit(2);
+            }))
+            .is_err()
+        );
     }
 }
 

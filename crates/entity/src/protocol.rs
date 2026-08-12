@@ -147,12 +147,92 @@ impl<B: Behavior> Behavior for EntityBehavior<B> {
 
 #[cfg(test)]
 mod tests {
-    use behavior::{Actions, Handler, MailAddr, Never, NoBirths, Pure, Route};
+    use behavior::{
+        Actions, ChildEvent, ChildStopped, CreationEvent, CreationKind, CreationResolved, Exit,
+        Handler, MailAddr, Never, NoBirths, PeerEvent, PeerStopped, Pure, Route, ShutdownEvent,
+        ShutdownRequested, TimeEvent, TimerElapsed, TimerGeneration, TimerId, WorkerCreationEvent,
+        WorkerCreationResolved, WorkerEvent, WorkerStopped,
+    };
 
     use super::{DrainFenceAcknowledged, EntityBehavior, EntityEvent, EntityProtocol};
     use behavior::{Behavior, Recipient, UserEvent};
 
     struct Counter(usize);
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum SystemEvent {
+        Time(TimerElapsed),
+        Peer(PeerStopped<MailAddr>),
+        Child(ChildStopped<MailAddr>),
+        Worker(WorkerStopped<MailAddr>),
+        Creation(CreationResolved<u64>),
+        WorkerCreation(WorkerCreationResolved<u64>),
+        Shutdown,
+    }
+
+    impl UserEvent for SystemEvent {
+        type Addr = MailAddr;
+        type Message = Never;
+
+        fn user(_: MailAddr, message: Never) -> Self {
+            match message {}
+        }
+
+        fn into_user(self) -> Result<behavior::User<MailAddr, Never>, Self> {
+            Err(self)
+        }
+    }
+
+    impl TimeEvent for SystemEvent {
+        fn time_reached(event: TimerElapsed) -> Option<Self> {
+            Some(Self::Time(event))
+        }
+    }
+
+    impl PeerEvent for SystemEvent {
+        fn peer_stopped(event: PeerStopped<MailAddr>) -> Option<Self> {
+            Some(Self::Peer(event))
+        }
+    }
+
+    impl ChildEvent for SystemEvent {
+        fn child_stopped(event: ChildStopped<MailAddr>) -> Option<Self> {
+            Some(Self::Child(event))
+        }
+    }
+
+    impl WorkerEvent for SystemEvent {
+        fn worker_stopped(event: WorkerStopped<MailAddr>) -> Option<Self> {
+            Some(Self::Worker(event))
+        }
+    }
+
+    impl CreationEvent for SystemEvent {
+        fn creation_resolved(event: CreationResolved<u64>) -> Option<Self> {
+            Some(Self::Creation(event))
+        }
+    }
+
+    impl WorkerCreationEvent for SystemEvent {
+        fn worker_creation_resolved(event: WorkerCreationResolved<u64>) -> Option<Self> {
+            Some(Self::WorkerCreation(event))
+        }
+    }
+
+    impl ShutdownEvent for SystemEvent {
+        fn shutdown_requested(_: ShutdownRequested) -> Option<Self> {
+            Some(Self::Shutdown)
+        }
+    }
+
+    fn forwarded(event: Option<EntityEvent<SystemEvent>>) -> SystemEvent {
+        match event {
+            Some(EntityEvent::Inner(event)) => event,
+            Some(EntityEvent::DrainFence { .. }) | None => {
+                panic!("system event was not forwarded to the inner protocol")
+            }
+        }
+    }
 
     impl Handler for Counter {
         type Addr = MailAddr;
@@ -201,5 +281,53 @@ mod tests {
         assert_eq!(actions.sends.own[0].message, DrainFenceAcknowledged);
         assert!(actions.creates.is_empty());
         assert!(matches!(actions.become_, behavior::Step::Continue));
+    }
+
+    #[test]
+    fn every_optional_system_event_is_forwarded_unchanged() {
+        let elapsed = TimerElapsed::new(TimerId(7), TimerGeneration(3));
+        let peer = PeerStopped::new(MailAddr(9), Ok(Exit::Normal));
+        let child = ChildStopped::new(11, Ok(Exit::Normal), std::time::Instant::now().into());
+        let worker = WorkerStopped::new(13, 17, Ok(Exit::Normal), std::time::Instant::now().into());
+        let creation = CreationResolved::replacement_incarnation(19, 18);
+        let worker_creation = WorkerCreationResolved::new(
+            23,
+            29,
+            CreationKind::ReplacementIncarnation { replaces: 28 },
+            Ok(()),
+        );
+
+        assert_eq!(
+            forwarded(EntityEvent::<SystemEvent>::time_reached(elapsed)),
+            SystemEvent::Time(elapsed)
+        );
+        assert_eq!(
+            forwarded(EntityEvent::<SystemEvent>::peer_stopped(peer.clone())),
+            SystemEvent::Peer(peer)
+        );
+        assert_eq!(
+            forwarded(EntityEvent::<SystemEvent>::child_stopped(child.clone())),
+            SystemEvent::Child(child)
+        );
+        assert_eq!(
+            forwarded(EntityEvent::<SystemEvent>::worker_stopped(worker.clone())),
+            SystemEvent::Worker(worker)
+        );
+        assert_eq!(
+            forwarded(EntityEvent::<SystemEvent>::creation_resolved(creation)),
+            SystemEvent::Creation(creation)
+        );
+        assert_eq!(
+            forwarded(EntityEvent::<SystemEvent>::worker_creation_resolved(
+                worker_creation
+            )),
+            SystemEvent::WorkerCreation(worker_creation)
+        );
+        assert_eq!(
+            forwarded(EntityEvent::<SystemEvent>::shutdown_requested(
+                ShutdownRequested
+            )),
+            SystemEvent::Shutdown
+        );
     }
 }

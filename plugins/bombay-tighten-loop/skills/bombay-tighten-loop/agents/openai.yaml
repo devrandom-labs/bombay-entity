@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bombay Tighten Loop"
+  short_description: "Research-driven, semantics-preserving Rust loop"
+  default_prompt: "Use $bombay-tighten-loop to research, test, and iteratively tighten this repository without changing its finalized semantics."

@@ -1,17 +1,23 @@
 //! Concurrent storage for local entity lifecycle machines.
 
+#[cfg(loom)]
+use loom::sync::atomic::{AtomicU64, Ordering};
+#[cfg(loom)]
+use loom::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, RandomState};
 use std::num::{NonZeroU64, NonZeroUsize};
+#[cfg(not(loom))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(loom))]
 use std::sync::{Arc, Mutex};
-
-use bombay_machine_executor::{LinearizedExecutor, OutputEvidence};
 
 use crate::{
     ActivationId, DispatchId, DrainFailure, EntityId, LifecycleMachine, LifecycleOutput, Refusal,
-    RetirementMode, SlotEffect, SlotEvent, TransitionEvidence, lifecycle_machine,
+    RetirementMode, SlotEffect, SlotEffectBatch, SlotEvent, TransitionEvidence, lifecycle_machine,
 };
+use bombay_machine_executor::{LinearizedExecutor, OutputEvidence};
+use bombay_transition::Machine;
 
 /// Fixed sizing and admission limits for a local directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,13 +38,16 @@ impl Default for DirectoryConfig {
 }
 
 /// Failure before a command can be submitted to a lifecycle machine.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum DirectoryError<C> {
     /// The shard count was not a power of two.
+    #[error("shard count was not a power of two")]
     InvalidShardCount,
     /// The monotonically increasing activation namespace is exhausted.
+    #[error("activation identity namespace is exhausted")]
     ActivationIdsExhausted(C),
     /// The monotonically increasing dispatch namespace is exhausted.
+    #[error("dispatch identity namespace is exhausted")]
     DispatchIdsExhausted(C),
 }
 
@@ -74,19 +83,37 @@ pub trait EffectInterpreter<I, C, E, L> {
 }
 
 /// One installed lifecycle decision awaiting effect interpretation.
+#[must_use = "installed lifecycle decision awaits effect interpretation via LocalDirectory::interpret"]
 pub struct DirectoryOutput<I, C, E, L> {
-    /// Correlation identity allocated for a dispatched command, when applicable.
-    pub dispatch_id: Option<DispatchId>,
     /// Checked evidence for the installed lifecycle decision.
     pub evidence: TransitionEvidence,
     pub(crate) activation_id: Option<ActivationId>,
     entity_id: EntityId<I>,
-    slot: Arc<Slot<C, E, L>>,
+    target: OutputTarget<C, E, L>,
+}
+
+/// Where an installed decision's effects await interpretation.
+enum OutputTarget<C, E, L> {
+    /// A directory-mapped slot with queued effects.
+    Mapped(Arc<Slot<C, E, L>>),
+    /// Effects already resolved for an event addressed to an absent entry.
+    /// Boxed: the cold variant stays off the mapped output's move path
+    /// (measured: inline costs the active dispatch path ~8%).
+    Transient(Box<SlotEffectBatch<C, E, L>>),
+}
+
+/// The installed decision for one dispatched command, with its guaranteed
+/// correlation identity.
+#[must_use = "installed lifecycle decision awaits effect interpretation via LocalDirectory::interpret"]
+pub struct DispatchOutput<I, C, E, L> {
+    /// Correlation identity allocated for the dispatched command.
+    pub dispatch_id: DispatchId,
+    /// Installed decision awaiting effect interpretation.
+    pub output: DirectoryOutput<I, C, E, L>,
 }
 
 struct Slot<C, E, L> {
     lifecycle: LinearizedExecutor<LifecycleMachine<C, E, L>>,
-    removable_activation: Mutex<Option<ActivationId>>,
 }
 
 struct Installed {
@@ -98,7 +125,6 @@ impl<C, E: Clone, L> Slot<C, E, L> {
     fn new() -> Self {
         Self {
             lifecycle: LinearizedExecutor::new(lifecycle_machine()),
-            removable_activation: Mutex::new(None),
         }
     }
 
@@ -113,28 +139,19 @@ impl<C, E: Clone, L> Slot<C, E, L> {
     fn activation_id(&self) -> Option<ActivationId> {
         self.lifecycle.evidence().and_then(|evidence| evidence.1)
     }
-
-    fn mark_removable(&self, activation_id: ActivationId) {
-        *self
-            .removable_activation
-            .lock()
-            .expect("slot lock poisoned") = Some(activation_id);
-    }
-
-    fn removable_as(&self, activation_id: ActivationId) -> bool {
-        *self
-            .removable_activation
-            .lock()
-            .expect("slot lock poisoned")
-            == Some(activation_id)
-    }
 }
 
 type Shard<I, C, E, L> = Mutex<HashMap<EntityId<I>, Arc<Slot<C, E, L>>>>;
 
 /// Sharded local storage for authoritative per-entity lifecycle machines.
+///
+/// Hashing first selects a shard before locking; [`Hash`] and [`Eq`] for `I`
+/// then run during table operations while that shard lock is held and therefore
+/// must not reenter this directory. Lifecycle effect callbacks run only after
+/// directory synchronization is released.
 pub struct LocalDirectory<I, C, E, L, S = RandomState> {
     shards: Box<[Shard<I, C, E, L>]>,
+    mask: u64,
     hash_builder: S,
     waiter_limit: NonZeroUsize,
     next_activation: AtomicU64,
@@ -176,11 +193,18 @@ where
         if !config.shards.get().is_power_of_two() {
             return Err(DirectoryError::InvalidShardCount);
         }
+        let mask = config
+            .shards
+            .get()
+            .checked_sub(1)
+            .and_then(|count| u64::try_from(count).ok())
+            .ok_or(DirectoryError::InvalidShardCount)?;
         let shards = (0..config.shards.get())
             .map(|_| Mutex::new(HashMap::new()))
             .collect();
         Ok(Self {
             shards,
+            mask,
             hash_builder,
             waiter_limit: config.activation_waiters,
             next_activation: AtomicU64::new(1),
@@ -199,58 +223,58 @@ where
     ///
     /// # Panics
     ///
-    /// Panics after a synchronization poison or an internal ownership invariant
-    /// violation. Neither can be recovered without risking lifecycle corruption.
+    /// Panics after a synchronization poison, which cannot be recovered without
+    /// risking lifecycle corruption.
     pub fn dispatch(
         &self,
         entity_id: EntityId<I>,
         command: C,
-    ) -> Result<DirectoryOutput<I, C, E, L>, DirectoryError<C>> {
-        let mut command = Some(command);
-        let dispatch_id = match allocate(&self.next_dispatch) {
-            Some(value) => DispatchId(value.get()),
-            None => {
-                return Err(DirectoryError::DispatchIdsExhausted(
-                    command.take().expect("command present"),
-                ));
-            }
+    ) -> Result<DispatchOutput<I, C, E, L>, DirectoryError<C>> {
+        let Some(dispatch_sequence) = allocate(&self.next_dispatch) else {
+            return Err(DirectoryError::DispatchIdsExhausted(command));
         };
+        let dispatch_id = DispatchId::new(dispatch_sequence);
         let shard = &self.shards[self.shard_index(&entity_id)];
-        let (slot, output) = {
-            let mut entries = shard.lock().expect("directory shard lock poisoned");
-            if let Some(slot) = entries.get(&entity_id) {
-                (Arc::clone(slot), None)
-            } else {
-                let Some(sequence) = allocate(&self.next_activation) else {
-                    return Err(DirectoryError::ActivationIdsExhausted(
-                        command.take().expect("command present"),
-                    ));
-                };
-                let activation_id = ActivationId::new(sequence);
-                let slot = Arc::new(Slot::new());
-                let installed = slot.submit(SlotEvent::ClaimActivation {
-                    activation_id,
-                    dispatch_id,
-                    command: command.take().expect("command present"),
-                    waiter_limit: self.waiter_limit,
-                });
-                entries.insert(entity_id.clone(), Arc::clone(&slot));
-                (slot, Some(installed))
-            }
-        };
-        let installed = output.unwrap_or_else(|| {
-            slot.submit(SlotEvent::Dispatch {
+        let mut entries = shard.lock().expect("directory shard lock poisoned");
+        if let Some(slot) = entries.get(&entity_id) {
+            let slot = Arc::clone(slot);
+            drop(entries);
+            let installed = slot.submit(SlotEvent::Dispatch {
                 dispatch_id,
-                command: command.take().expect("command present"),
-            })
+                command,
+            });
+            return Ok(DispatchOutput {
+                dispatch_id,
+                output: directory_output(
+                    entity_id,
+                    installed.evidence,
+                    installed.activation_id,
+                    OutputTarget::Mapped(slot),
+                ),
+            });
+        }
+        let Some(activation_sequence) = allocate(&self.next_activation) else {
+            return Err(DirectoryError::ActivationIdsExhausted(command));
+        };
+        let activation_id = ActivationId::new(activation_sequence);
+        let slot = Arc::new(Slot::new());
+        let installed = slot.submit(SlotEvent::ClaimActivation {
+            activation_id,
+            dispatch_id,
+            command,
+            waiter_limit: self.waiter_limit,
         });
-        Ok(directory_output(
-            entity_id,
-            Some(dispatch_id),
-            installed.evidence,
-            installed.activation_id,
-            slot,
-        ))
+        entries.insert(entity_id.clone(), Arc::clone(&slot));
+        drop(entries);
+        Ok(DispatchOutput {
+            dispatch_id,
+            output: directory_output(
+                entity_id,
+                installed.evidence,
+                installed.activation_id,
+                OutputTarget::Mapped(slot),
+            ),
+        })
     }
 
     /// Submit successful exact-incarnation activation to the represented slot.
@@ -360,6 +384,8 @@ where
     /// Panics if a directory shard lock was poisoned.
     #[must_use]
     pub fn len(&self) -> usize {
+        // The sum cannot overflow: every counted entry is a live heap
+        // allocation, so the total is bounded far below usize::MAX.
         self.shards
             .iter()
             .map(|shard| shard.lock().expect("directory shard lock poisoned").len())
@@ -391,21 +417,18 @@ where
             .expect("directory shard lock poisoned")
             .get(entity_id)
             .cloned();
-        let (slot, installed) = if let Some(slot) = slot {
+        if let Some(slot) = slot {
             let installed = slot.submit(event);
-            (slot, installed)
-        } else {
-            let slot = Arc::new(Slot::new());
-            let installed = slot.submit(event);
-            (slot, installed)
-        };
-        directory_output(
-            entity_id.clone(),
-            None,
-            installed.evidence,
-            installed.activation_id,
-            slot,
-        )
+            return directory_output(
+                entity_id.clone(),
+                installed.evidence,
+                installed.activation_id,
+                OutputTarget::Mapped(slot),
+            );
+        }
+        // No entry: reduce the event on a stack-resident machine instead of
+        // allocating a slot that would be discarded after interpretation.
+        submit_absent(entity_id.clone(), event)
     }
 
     /// Interpret all effects queued for the output's stable slot.
@@ -418,70 +441,90 @@ where
         R: EffectInterpreter<I, C, E, L>,
     {
         let DirectoryOutput {
-            entity_id, slot, ..
+            entity_id, target, ..
         } = output;
-        slot.lifecycle
-            .dispatch_pending(&|output: LifecycleOutput<C, E, L>| {
-                output.effects.for_each(|effect| match effect {
-                    SlotEffect::StartActivation { activation_id } => {
-                        runtime.start_activation(entity_id.clone(), activation_id);
-                    }
-                    SlotEffect::Deliver {
-                        activation_id,
-                        dispatch_id,
-                        endpoint,
-                        command,
-                    } => runtime.deliver(
-                        entity_id.clone(),
-                        activation_id,
-                        dispatch_id,
-                        endpoint,
-                        command,
-                    ),
-                    SlotEffect::Reject {
-                        dispatch_id,
-                        command,
-                        reason,
-                    } => runtime.reject(dispatch_id, command, reason),
-                    SlotEffect::EnqueueFence {
-                        activation_id,
-                        endpoint,
-                    } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
-                    SlotEffect::Retire {
-                        activation_id,
-                        lease,
-                        retirement,
-                    } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
-                    SlotEffect::Remove { activation_id } => {
-                        slot.mark_removable(activation_id);
-                        self.remove_matching(&entity_id, &slot, activation_id);
-                    }
-                });
-            });
+        match target {
+            OutputTarget::Mapped(slot) => {
+                slot.lifecycle
+                    .dispatch_pending(&|output: LifecycleOutput<C, E, L>| {
+                        output.effects.for_each(|effect| {
+                            self.apply_effect(&entity_id, Some(&slot), effect, runtime);
+                        });
+                    });
+            }
+            OutputTarget::Transient(effects) => {
+                effects.for_each(|effect| self.apply_effect(&entity_id, None, effect, runtime));
+            }
+        }
     }
 
-    fn remove_matching(
+    #[inline]
+    fn apply_effect<R>(
         &self,
         entity_id: &EntityId<I>,
-        slot: &Arc<Slot<C, E, L>>,
-        activation_id: ActivationId,
-    ) -> bool {
+        slot: Option<&Arc<Slot<C, E, L>>>,
+        effect: SlotEffect<C, E, L>,
+        runtime: &R,
+    ) where
+        R: EffectInterpreter<I, C, E, L>,
+    {
+        match effect {
+            SlotEffect::StartActivation { activation_id } => {
+                runtime.start_activation(entity_id.clone(), activation_id);
+            }
+            SlotEffect::Deliver {
+                activation_id,
+                dispatch_id,
+                endpoint,
+                command,
+            } => runtime.deliver(
+                entity_id.clone(),
+                activation_id,
+                dispatch_id,
+                endpoint,
+                command,
+            ),
+            SlotEffect::Reject {
+                dispatch_id,
+                command,
+                reason,
+            } => runtime.reject(dispatch_id, command, reason),
+            SlotEffect::EnqueueFence {
+                activation_id,
+                endpoint,
+            } => runtime.enqueue_fence(entity_id.clone(), activation_id, endpoint),
+            SlotEffect::Retire {
+                activation_id,
+                lease,
+                retirement,
+            } => runtime.retire(entity_id.clone(), activation_id, lease, retirement),
+            // A mapped slot never acquires a second activation, so pointer
+            // identity is the exact removal authority. A transient decision
+            // belongs to no mapped slot, so its Remove cannot match anything.
+            SlotEffect::Remove { .. } => {
+                if let Some(slot) = slot {
+                    self.remove_matching(entity_id, slot);
+                }
+            }
+        }
+    }
+
+    fn remove_matching(&self, entity_id: &EntityId<I>, slot: &Arc<Slot<C, E, L>>) {
         let mut entries = self.shards[self.shard_index(entity_id)]
             .lock()
             .expect("directory shard lock poisoned");
-        let matches = entries
+        if entries
             .get(entity_id)
             .is_some_and(|stored| Arc::ptr_eq(stored, slot))
-            && slot.removable_as(activation_id);
-        if matches {
+        {
             entries.remove(entity_id);
         }
-        matches
     }
 
     fn shard_index(&self, entity_id: &EntityId<I>) -> usize {
-        let mask = u64::try_from(self.shards.len() - 1).expect("shard mask fits u64");
-        usize::try_from(self.hash_builder.hash_one(entity_id) & mask)
+        // The mask derives from the shard count, so the masked hash always
+        // fits the pointer width that allocated the shards.
+        usize::try_from(self.hash_builder.hash_one(entity_id) & self.mask)
             .expect("masked hash fits usize")
     }
 }
@@ -494,6 +537,13 @@ impl<C, E, L> OutputEvidence for LifecycleOutput<C, E, L> {
     }
 }
 
+/// Allocate the next non-zero identity from a monotonic sequence.
+///
+/// `Relaxed` suffices by structural argument: the only requirement is
+/// uniqueness, which the atomic read-modify-write modification order already
+/// guarantees for any ordering. No non-atomic state is published through these
+/// counters — every identity is an opaque token, and all slot state it later
+/// names is synchronized by the shard and executor mutexes instead.
 fn allocate(sequence: &AtomicU64) -> Option<NonZeroU64> {
     sequence
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
@@ -503,18 +553,32 @@ fn allocate(sequence: &AtomicU64) -> Option<NonZeroU64> {
         .and_then(NonZeroU64::new)
 }
 
+/// Reduce an event addressed to an absent entry on a stack-resident machine.
+#[cold]
+#[inline(never)]
+fn submit_absent<I, C, E: Clone, L>(
+    entity_id: EntityId<I>,
+    event: SlotEvent<C, E, L>,
+) -> DirectoryOutput<I, C, E, L> {
+    let (output, _) = lifecycle_machine().step(event);
+    directory_output(
+        entity_id,
+        output.evidence,
+        output.activation_id,
+        OutputTarget::Transient(Box::new(output.effects)),
+    )
+}
+
 fn directory_output<I, C, E, L>(
     entity_id: EntityId<I>,
-    dispatch_id: Option<DispatchId>,
     evidence: TransitionEvidence,
     activation_id: Option<ActivationId>,
-    slot: Arc<Slot<C, E, L>>,
+    target: OutputTarget<C, E, L>,
 ) -> DirectoryOutput<I, C, E, L> {
     DirectoryOutput {
-        dispatch_id,
         evidence,
         activation_id,
         entity_id,
-        slot,
+        target,
     }
 }

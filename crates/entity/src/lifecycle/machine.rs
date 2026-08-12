@@ -143,6 +143,12 @@ impl LifecycleEdge {
             label: trigger_label(trigger),
         }
     }
+
+    /// Test whether this exact typed edge is declared by the lifecycle topology.
+    #[must_use]
+    pub fn is_declared(self) -> bool {
+        LIFECYCLE_TOPOLOGY.transitions.contains(&self.transition())
+    }
 }
 
 /// Evidence produced by one lifecycle execution.
@@ -217,54 +223,18 @@ pub const LIFECYCLE_TOPOLOGY: Topology = Topology {
     transitions: TRANSITIONS,
 };
 
-/// Property-test model obtained by structurally interpreting the machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LifecycleModel(Topology);
-
-impl LifecycleModel {
-    /// Borrow the vertices in deterministic declaration order.
-    #[must_use]
-    pub const fn vertices(self) -> &'static [Vertex] {
-        self.0.vertices
-    }
-
-    /// Borrow the edges in deterministic declaration order.
-    #[must_use]
-    pub const fn transitions(self) -> &'static [Transition] {
-        self.0.transitions
-    }
-
-    /// Test whether exact typed edge evidence is declared by this model.
-    #[must_use]
-    pub fn contains(self, edge: LifecycleEdge) -> bool {
-        self.0.transitions.contains(&edge.transition())
-    }
-
-    /// Render deterministic Mermaid into any formatting sink.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the formatting sink fails or the model is invalid.
-    pub fn write_mermaid(self, output: &mut impl core::fmt::Write) -> core::fmt::Result {
-        self.0.write_mermaid(output)
-    }
-}
-
-/// Return the authoritative lifecycle model used by execution and tests.
-#[must_use]
-pub const fn lifecycle_model() -> LifecycleModel {
-    LifecycleModel(LIFECYCLE_TOPOLOGY)
-}
-
 /// Lifecycle-specific structural validation failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LifecycleTopologyError {
     /// Generic topology validation failed.
-    Structure(TopologyError),
+    #[error("generic topology validation failed")]
+    Structure(#[from] TopologyError),
     /// One required lifecycle edge is absent.
+    #[error("required lifecycle edge is absent")]
     Missing(LifecycleEdge),
-    /// Retirement could reopen admission.
-    RetiringToActive,
+    /// A draining or retiring edge could reopen admission.
+    #[error("drain or retirement could reopen admission")]
+    ReopensAdmission,
 }
 
 /// Validate graph properties and required entity lifecycle invariants.
@@ -282,9 +252,13 @@ pub fn validate_lifecycle_topology(topology: Topology) -> Result<(), LifecycleTo
         }
     }
     if topology.transitions.iter().any(|edge| {
-        edge.from == LifecyclePhase::Retiring.id() && edge.to == LifecyclePhase::Active.id()
+        let from_closes = edge.from == LifecyclePhase::Draining.id()
+            || edge.from == LifecyclePhase::Retiring.id();
+        let to_admission =
+            edge.to == LifecyclePhase::Activating.id() || edge.to == LifecyclePhase::Active.id();
+        from_closes && to_admission
     }) {
-        return Err(LifecycleTopologyError::RetiringToActive);
+        return Err(LifecycleTopologyError::ReopensAdmission);
     }
     Ok(())
 }
@@ -375,20 +349,23 @@ mod tests {
     use bombay_transition::Machine;
 
     use super::*;
-    use crate::{ActivationId, DispatchId, DrainFailure, DrainStage, SlotEvent};
+    use crate::{ActivationId, DispatchId, DrainFailure, DrainStage, SlotEffect, SlotEvent};
 
     fn activation(value: u64) -> ActivationId {
         ActivationId::new(NonZeroU64::new(value).unwrap())
     }
 
+    fn dispatch(value: u64) -> DispatchId {
+        DispatchId(NonZeroU64::new(value).unwrap())
+    }
+
     #[test]
     fn topology_is_valid_and_renders_deterministically() {
         validate_lifecycle_topology(LIFECYCLE_TOPOLOGY).unwrap();
-        let model = lifecycle_model();
         let mut mermaid = String::new();
-        model.write_mermaid(&mut mermaid).unwrap();
-        assert_eq!(model.vertices().len(), 5);
-        assert_eq!(model.transitions().len(), 7);
+        LIFECYCLE_TOPOLOGY.write_mermaid(&mut mermaid).unwrap();
+        assert_eq!(LIFECYCLE_TOPOLOGY.vertices.len(), 5);
+        assert_eq!(LIFECYCLE_TOPOLOGY.transitions.len(), 7);
         assert_eq!(
             mermaid,
             "stateDiagram-v2\n    [*] --> inactive\n    inactive --> activating: claim_activation\n    activating --> active: activation_succeeded\n    activating --> inactive: activation_failed\n    active --> draining: begin_drain\n    draining --> retiring: fence_acknowledged\n    draining --> retiring: force_drain\n    retiring --> inactive: terminated\n"
@@ -397,11 +374,10 @@ mod tests {
 
     #[test]
     fn every_observed_phase_change_carries_declared_edge_evidence() {
-        let model = lifecycle_model();
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (claim, machine) = machine.step(SlotEvent::ClaimActivation {
             activation_id: activation(1),
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 1,
             waiter_limit: NonZeroUsize::MIN,
         });
@@ -441,16 +417,15 @@ mod tests {
             let TransitionEvidence::Traversed(edge) = evidence else {
                 panic!("phase change lacked edge evidence")
             };
-            assert!(model.contains(edge));
+            assert!(edge.is_declared());
         }
-        assert_eq!(lifecycle_model(), model);
     }
 
     #[test]
     fn stale_and_nonchanging_inputs_are_honestly_classified() {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (dispatch, machine) = machine.step(SlotEvent::Dispatch {
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 1,
         });
         assert_eq!(
@@ -477,7 +452,7 @@ mod tests {
         let machine = lifecycle_machine::<u8, u8, u8>();
         let (_, machine) = machine.step(SlotEvent::ClaimActivation {
             activation_id: activation(1),
-            dispatch_id: DispatchId(1),
+            dispatch_id: dispatch(1),
             command: 1,
             waiter_limit: NonZeroUsize::MIN,
         });
@@ -510,29 +485,43 @@ mod tests {
     enum Input {
         ClaimCurrent,
         Dispatch,
+        CancelCurrent,
+        CancelStale,
         ActivationCurrent,
         ActivationStale,
         ActivationFailure,
+        ActivationFailureStale,
         DeliveryCurrent,
+        DeliveryFailedCurrent,
+        DeliveryFailedStale,
         BeginDrainCurrent,
         BeginDrainStale,
         FenceCurrent,
+        FenceStale,
         ForceCurrent,
+        ForceStale,
         TerminatedCurrent,
         TerminatedStale,
     }
 
-    const INPUTS: [Input; 12] = [
+    const INPUTS: [Input; 19] = [
         Input::ClaimCurrent,
         Input::Dispatch,
+        Input::CancelCurrent,
+        Input::CancelStale,
         Input::ActivationCurrent,
         Input::ActivationStale,
         Input::ActivationFailure,
+        Input::ActivationFailureStale,
         Input::DeliveryCurrent,
+        Input::DeliveryFailedCurrent,
+        Input::DeliveryFailedStale,
         Input::BeginDrainCurrent,
         Input::BeginDrainStale,
         Input::FenceCurrent,
+        Input::FenceStale,
         Input::ForceCurrent,
+        Input::ForceStale,
         Input::TerminatedCurrent,
         Input::TerminatedStale,
     ];
@@ -541,13 +530,21 @@ mod tests {
         match input {
             Input::ClaimCurrent => SlotEvent::ClaimActivation {
                 activation_id: activation(1),
-                dispatch_id: DispatchId(1),
+                dispatch_id: dispatch(1),
                 command: 1,
                 waiter_limit: NonZeroUsize::new(2).unwrap(),
             },
             Input::Dispatch => SlotEvent::Dispatch {
-                dispatch_id: DispatchId(2),
+                dispatch_id: dispatch(2),
                 command: 2,
+            },
+            Input::CancelCurrent => SlotEvent::CancelWaiter {
+                activation_id: activation(1),
+                dispatch_id: dispatch(1),
+            },
+            Input::CancelStale => SlotEvent::CancelWaiter {
+                activation_id: activation(2),
+                dispatch_id: dispatch(1),
             },
             Input::ActivationCurrent => SlotEvent::ActivationSucceeded {
                 activation_id: activation(1),
@@ -562,9 +559,20 @@ mod tests {
             Input::ActivationFailure => SlotEvent::ActivationFailed {
                 activation_id: activation(1),
             },
+            Input::ActivationFailureStale => SlotEvent::ActivationFailed {
+                activation_id: activation(2),
+            },
             Input::DeliveryCurrent => SlotEvent::DeliveryResolved {
                 activation_id: activation(1),
                 failure: None,
+            },
+            Input::DeliveryFailedCurrent => SlotEvent::DeliveryResolved {
+                activation_id: activation(1),
+                failure: Some((dispatch(3), 3)),
+            },
+            Input::DeliveryFailedStale => SlotEvent::DeliveryResolved {
+                activation_id: activation(2),
+                failure: Some((dispatch(3), 3)),
             },
             Input::BeginDrainCurrent => SlotEvent::BeginDrain {
                 activation_id: activation(1),
@@ -575,8 +583,18 @@ mod tests {
             Input::FenceCurrent => SlotEvent::FenceAcknowledged {
                 activation_id: activation(1),
             },
+            Input::FenceStale => SlotEvent::FenceAcknowledged {
+                activation_id: activation(2),
+            },
             Input::ForceCurrent => SlotEvent::ForceDrain {
                 activation_id: activation(1),
+                failure: DrainFailure {
+                    stage: DrainStage::FenceAcknowledgement,
+                    outstanding_reservations: 0,
+                },
+            },
+            Input::ForceStale => SlotEvent::ForceDrain {
+                activation_id: activation(2),
                 failure: DrainFailure {
                     stage: DrainStage::FenceAcknowledgement,
                     outstanding_reservations: 0,
@@ -591,34 +609,90 @@ mod tests {
         }
     }
 
-    fn check_trace(trace: &[Input], model: LifecycleModel) {
+    fn check_trace(trace: &[Input]) {
         let mut machine = lifecycle_machine::<u8, u8, u8>();
         for input in trace {
-            let before = lifecycle_model();
+            let before = machine.state().phase();
             let (output, successor) = machine.step(event(*input));
-            if let TransitionEvidence::Traversed(edge) = output.evidence {
-                assert!(model.contains(edge));
+            let after = successor.state().phase();
+            match output.evidence {
+                TransitionEvidence::Traversed(edge) => {
+                    assert!(edge.is_declared());
+                    let (from, _, to) = edge.endpoints();
+                    assert_eq!((from, to), (before, after));
+                }
+                TransitionEvidence::SelfLoop { phase, .. } => {
+                    assert_eq!(phase, before);
+                    assert_eq!(before, after);
+                }
+                TransitionEvidence::Ignored { phase, .. } => {
+                    assert_eq!(phase, before);
+                    assert_eq!(before, after);
+                    // An ignored input never changes state; the only effects it
+                    // may emit are cleanup: rejections returning owned commands
+                    // and retirement of stale incarnation leases.
+                    assert!(
+                        output.effects.as_slice().iter().all(|effect| matches!(
+                            effect,
+                            SlotEffect::Reject { .. } | SlotEffect::Retire { .. }
+                        )),
+                        "ignored input produced non-cleanup effects"
+                    );
+                }
             }
-            assert_eq!(lifecycle_model(), before);
             machine = successor;
         }
     }
 
-    fn enumerate(prefix: &mut Vec<Input>, remaining: usize, model: LifecycleModel) {
-        check_trace(prefix, model);
+    fn enumerate(prefix: &mut Vec<Input>, remaining: usize) {
+        check_trace(prefix);
         if remaining == 0 {
             return;
         }
         for input in INPUTS {
             prefix.push(input);
-            enumerate(prefix, remaining - 1, model);
+            enumerate(prefix, remaining - 1);
             prefix.pop();
         }
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "the negative fixture deliberately leaks a synthetic 'static topology slice"
+    )]
+    fn topology_reopening_admission_from_drain_or_retirement_is_rejected() {
+        for (from, to) in [
+            (LifecyclePhase::Draining, LifecyclePhase::Active),
+            (LifecyclePhase::Draining, LifecyclePhase::Activating),
+            (LifecyclePhase::Retiring, LifecyclePhase::Active),
+            (LifecyclePhase::Retiring, LifecyclePhase::Activating),
+        ] {
+            let mut transitions = LIFECYCLE_TOPOLOGY.transitions.to_vec();
+            transitions.push(Transition {
+                from: from.id(),
+                trigger: TriggerId(99),
+                to: to.id(),
+                label: "reopen",
+            });
+            let topology = Topology {
+                transitions: transitions.leak(),
+                ..LIFECYCLE_TOPOLOGY
+            };
+            assert_eq!(
+                validate_lifecycle_topology(topology),
+                Err(LifecycleTopologyError::ReopensAdmission),
+                "{from:?} -> {to:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "native exhaustive enumeration covers 137,561 traces; Miri runs each reducer test"
+    )]
     fn bounded_event_traces_preserve_topology_evidence_and_structure() {
-        let model = lifecycle_model();
-        enumerate(&mut Vec::new(), 4, model);
+        enumerate(&mut Vec::new(), 4);
     }
 }

@@ -12,7 +12,7 @@ The first version is local and in-memory. Its responsibilities are:
 - routing admitted commands to the committed incarnation;
 - passivation that closes admission before accepted work drains;
 - rejection of stale completion and passivation events;
-- typed replies and lifecycle telemetry without exposing runtime control.
+- typed replies without exposing runtime control.
 
 The lifecycle is:
 
@@ -21,6 +21,7 @@ Inactive
   -> Activating(generation)
   -> Active(generation, actor reference)
   -> Draining(generation)
+  -> Retiring(generation)
   -> Inactive
 ```
 
@@ -38,3 +39,11 @@ communication, and observation facilities.
 
 The detailed lifecycle, ownership, and correctness contract is documented in
 [`docs/architecture.mdx`](docs/architecture.mdx).
+
+The default `protocol` feature includes the actor-behavior adapter. Core
+directory/lifecycle users may disable default features; this is also how the
+real-directory Loom model avoids compiling unrelated async mailbox machinery.
+
+Development is Nix-pinned. `nix flake check -L` runs the stable Rust gate plus
+separate real-executor and real-directory Loom checks and an isolated nightly
+Miri check; stable remains the toolchain for every shipped build.

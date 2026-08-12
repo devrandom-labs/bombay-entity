@@ -76,7 +76,10 @@ fn activating_hot_key() -> Duration {
     let discard = Discard::new();
     let started = Instant::now();
     for command in 0..ITERATIONS {
-        let output = directory.dispatch(EntityId::new(1), command).unwrap();
+        let output = directory
+            .dispatch(EntityId::new(1), command)
+            .unwrap()
+            .output;
         directory.interpret(output, &discard);
     }
     started.elapsed()
@@ -86,7 +89,7 @@ fn active_hot_key() -> Duration {
     let directory = Arc::new(Directory::new(config(64)).unwrap());
     let discard = Discard::new();
     let entity_id = EntityId::new(1);
-    directory.interpret(directory.dispatch(entity_id, 0).unwrap(), &discard);
+    directory.interpret(directory.dispatch(entity_id, 0).unwrap().output, &discard);
     let activation_id =
         ActivationId::new(NonZeroU64::new(discard.activation.load(Ordering::Relaxed)).unwrap());
     let resolve = Resolve {
@@ -98,7 +101,7 @@ fn active_hot_key() -> Duration {
     );
     let started = Instant::now();
     for command in 0..ITERATIONS {
-        let output = directory.dispatch(entity_id, command).unwrap();
+        let output = directory.dispatch(entity_id, command).unwrap().output;
         directory.interpret(output, &resolve);
     }
     started.elapsed()
@@ -109,7 +112,25 @@ fn independent_keys() -> Duration {
     let discard = Discard::new();
     let started = Instant::now();
     for command in 0..INDEPENDENT_ITERATIONS {
-        let output = directory.dispatch(EntityId::new(command), command).unwrap();
+        let output = directory
+            .dispatch(EntityId::new(command), command)
+            .unwrap()
+            .output;
+        directory.interpret(output, &discard);
+    }
+    started.elapsed()
+}
+
+/// Stale lifecycle callbacks addressed to an entity with no directory entry,
+/// the steady state after passivation churn.
+fn stale_absent_callbacks() -> Duration {
+    let directory = Directory::new(config(64)).unwrap();
+    let discard = Discard::new();
+    let entity_id = EntityId::new(1);
+    let started = Instant::now();
+    for sequence in 1..=ITERATIONS {
+        let activation_id = ActivationId::new(NonZeroU64::new(sequence).unwrap());
+        let output = directory.terminated(&entity_id, activation_id);
         directory.interpret(output, &discard);
     }
     started.elapsed()
@@ -119,7 +140,7 @@ fn contended_active_key() -> Duration {
     let directory = Arc::new(Directory::new(config(THREADS)).unwrap());
     let discard = Discard::new();
     let entity_id = EntityId::new(1);
-    directory.interpret(directory.dispatch(entity_id, 0).unwrap(), &discard);
+    directory.interpret(directory.dispatch(entity_id, 0).unwrap().output, &discard);
     let activation_id =
         ActivationId::new(NonZeroU64::new(discard.activation.load(Ordering::Relaxed)).unwrap());
     let resolve = Arc::new(Resolve {
@@ -140,7 +161,8 @@ fn contended_active_key() -> Duration {
                 for command in 0..CONTENDED_ITERATIONS {
                     let output = directory
                         .dispatch(EntityId::new(1), command + worker as u64)
-                        .unwrap();
+                        .unwrap()
+                        .output;
                     directory.interpret(output, resolve.as_ref());
                 }
             })
@@ -154,18 +176,48 @@ fn contended_active_key() -> Duration {
     started.elapsed()
 }
 
+const REPETITIONS: usize = 7;
+
+/// Run a workload repeatedly, returning (minimum, median) elapsed time.
+///
+/// The minimum is the least-noise estimator for cross-change comparison; the
+/// median exposes typical behavior. A wide min/median spread means machine
+/// noise dominates and small deltas must not be trusted.
+fn repeat(mut workload: impl FnMut() -> Duration) -> (Duration, Duration) {
+    let mut samples = [Duration::ZERO; REPETITIONS];
+    for sample in &mut samples {
+        *sample = workload();
+    }
+    samples.sort_unstable();
+    (samples[0], samples[REPETITIONS / 2])
+}
+
 fn main() {
-    let activating = activating_hot_key();
-    let active = active_hot_key();
-    let independent = independent_keys();
-    let contended = contended_active_key();
-    black_box((&activating, &active, &independent, &contended));
+    let (activating_min, activating_med) = repeat(activating_hot_key);
+    let (active_min, active_med) = repeat(active_hot_key);
+    let (independent_min, independent_med) = repeat(independent_keys);
+    let (contended_min, contended_med) = repeat(contended_active_key);
+    let (stale_min, stale_med) = repeat(stale_absent_callbacks);
+    black_box((
+        activating_min,
+        active_min,
+        independent_min,
+        contended_min,
+        stale_min,
+    ));
     println!("iterations={ITERATIONS}");
-    println!("activating_hot_key={activating:?}");
-    println!("active_hot_key={active:?}");
+    println!("repetitions={REPETITIONS}");
+    println!("activating_hot_key_min={activating_min:?}");
+    println!("activating_hot_key_median={activating_med:?}");
+    println!("active_hot_key_min={active_min:?}");
+    println!("active_hot_key_median={active_med:?}");
     println!("independent_iterations={INDEPENDENT_ITERATIONS}");
-    println!("independent_keys={independent:?}");
+    println!("independent_keys_min={independent_min:?}");
+    println!("independent_keys_median={independent_med:?}");
     println!("threads={THREADS}");
     println!("contended_iterations_per_thread={CONTENDED_ITERATIONS}");
-    println!("contended_active_key={contended:?}");
+    println!("contended_active_key_min={contended_min:?}");
+    println!("contended_active_key_median={contended_med:?}");
+    println!("stale_absent_callbacks_min={stale_min:?}");
+    println!("stale_absent_callbacks_median={stale_med:?}");
 }
