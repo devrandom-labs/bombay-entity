@@ -113,6 +113,19 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - Remaining backlog item is E26's upstream-blocked real-SUT Loom integration; no actionable local
   hypothesis remains pending final gate and adversarial audit.
 
+## Taken-over OMP loop (2026-08-12)
+- E33-E38 pinned exhaustive protocol forwarding, the true dispatch-cancellation
+  boundary, pointer-only map removal authority, activation-cancellation
+  observation, the matching Loom model, and the shard-lock callback boundary.
+- E39 retained prehashed `hashbrown` shard entries. Active dispatch hashes once
+  instead of twice; alternating seven-repetition runs improved activating and
+  active hot keys by about 14-16% and contention by about 13-15%, while the
+  independent and stale minima stayed inside the 5% noise bound.
+- E39 full `check.sh` gate green: build, fmt, strict Clippy, 61/61 nextest,
+  Loom, doctests, docs, audit, deny, and the 93.2% coverage floor.
+- The loop remains active. These are completed experiments, not a convergence
+  declaration; fresh whole-workspace clean-audit counting restarts after E39.
+
 ## LOOP_DONE: evidence follow-up fixed point (2026-08-12)
 - Full `plugins/bombay-tighten-loop/scripts/check.sh` green: all 10 flake checks, 58/58 nextest,
   driver real-SUT Loom, entity protocol Loom models, fmt, strict Clippy, docs/doctests, audit,

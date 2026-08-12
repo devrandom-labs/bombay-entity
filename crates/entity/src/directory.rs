@@ -1,6 +1,5 @@
 //! Concurrent storage for local entity lifecycle machines.
 
-use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, RandomState};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,6 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use bombay_machine_executor::{LinearizedExecutor, OutputEvidence};
 use bombay_transition::Machine;
+use hashbrown::HashMap;
+use hashbrown::hash_map::RawEntryMut;
 
 use crate::{
     ActivationId, DispatchId, DrainFailure, EntityId, LifecycleMachine, LifecycleOutput, Refusal,
@@ -136,7 +137,18 @@ impl<C, E: Clone, L> Slot<C, E, L> {
     }
 }
 
-type Shard<I, C, E, L> = Mutex<HashMap<EntityId<I>, Arc<Slot<C, E, L>>>>;
+struct SharedBuildHasher<S>(Arc<S>);
+
+impl<S: BuildHasher> BuildHasher for SharedBuildHasher<S> {
+    type Hasher = S::Hasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        self.0.build_hasher()
+    }
+}
+
+type Shard<I, C, E, L, S> = Mutex<HashMap<EntityId<I>, Arc<Slot<C, E, L>>, SharedBuildHasher<S>>>;
+type Shards<I, C, E, L, S> = Box<[Shard<I, C, E, L, S>]>;
 
 /// Sharded local storage for authoritative per-entity lifecycle machines.
 ///
@@ -145,9 +157,9 @@ type Shard<I, C, E, L> = Mutex<HashMap<EntityId<I>, Arc<Slot<C, E, L>>>>;
 /// [`Hash`] and [`Eq`] for `I` must not reenter this directory. Lifecycle
 /// effect callbacks run only after directory synchronization is released.
 pub struct LocalDirectory<I, C, E, L, S = RandomState> {
-    shards: Box<[Shard<I, C, E, L>]>,
+    shards: Shards<I, C, E, L, S>,
     mask: u64,
-    hash_builder: S,
+    hash_builder: Arc<S>,
     waiter_limit: NonZeroUsize,
     next_activation: AtomicU64,
     next_dispatch: AtomicU64,
@@ -194,8 +206,13 @@ where
             .checked_sub(1)
             .and_then(|count| u64::try_from(count).ok())
             .ok_or(DirectoryError::InvalidShardCount)?;
+        let hash_builder = Arc::new(hash_builder);
         let shards = (0..config.shards.get())
-            .map(|_| Mutex::new(HashMap::new()))
+            .map(|_| {
+                Mutex::new(HashMap::with_hasher(SharedBuildHasher(Arc::clone(
+                    &hash_builder,
+                ))))
+            })
             .collect();
         Ok(Self {
             shards,
@@ -229,47 +246,55 @@ where
             return Err(DirectoryError::DispatchIdsExhausted(command));
         };
         let dispatch_id = DispatchId::new(dispatch_sequence);
-        let shard = &self.shards[self.shard_index(&entity_id)];
+        let hash = self.entity_hash(&entity_id);
+        let shard = &self.shards[self.shard_index(hash)];
         let mut entries = shard.lock().expect("directory shard lock poisoned");
-        if let Some(slot) = entries.get(&entity_id) {
-            let slot = Arc::clone(slot);
-            drop(entries);
-            let installed = slot.submit(SlotEvent::Dispatch {
-                dispatch_id,
-                command,
-            });
-            return Ok(DispatchOutput {
-                dispatch_id,
-                output: directory_output(
-                    entity_id,
-                    installed.evidence,
-                    installed.activation_id,
-                    OutputTarget::Mapped(slot),
-                ),
-            });
+        match entries
+            .raw_entry_mut()
+            .from_hash(hash, |known| known == &entity_id)
+        {
+            RawEntryMut::Occupied(entry) => {
+                let slot = Arc::clone(entry.get());
+                drop(entries);
+                let installed = slot.submit(SlotEvent::Dispatch {
+                    dispatch_id,
+                    command,
+                });
+                Ok(DispatchOutput {
+                    dispatch_id,
+                    output: directory_output(
+                        entity_id,
+                        installed.evidence,
+                        installed.activation_id,
+                        OutputTarget::Mapped(slot),
+                    ),
+                })
+            }
+            RawEntryMut::Vacant(entry) => {
+                let Some(activation_sequence) = allocate(&self.next_activation) else {
+                    return Err(DirectoryError::ActivationIdsExhausted(command));
+                };
+                let activation_id = ActivationId::new(activation_sequence);
+                let slot = Arc::new(Slot::new());
+                let installed = slot.submit(SlotEvent::ClaimActivation {
+                    activation_id,
+                    dispatch_id,
+                    command,
+                    waiter_limit: self.waiter_limit,
+                });
+                entry.insert_hashed_nocheck(hash, entity_id.clone(), Arc::clone(&slot));
+                drop(entries);
+                Ok(DispatchOutput {
+                    dispatch_id,
+                    output: directory_output(
+                        entity_id,
+                        installed.evidence,
+                        installed.activation_id,
+                        OutputTarget::Mapped(slot),
+                    ),
+                })
+            }
         }
-        let Some(activation_sequence) = allocate(&self.next_activation) else {
-            return Err(DirectoryError::ActivationIdsExhausted(command));
-        };
-        let activation_id = ActivationId::new(activation_sequence);
-        let slot = Arc::new(Slot::new());
-        let installed = slot.submit(SlotEvent::ClaimActivation {
-            activation_id,
-            dispatch_id,
-            command,
-            waiter_limit: self.waiter_limit,
-        });
-        entries.insert(entity_id.clone(), Arc::clone(&slot));
-        drop(entries);
-        Ok(DispatchOutput {
-            dispatch_id,
-            output: directory_output(
-                entity_id,
-                installed.evidence,
-                installed.activation_id,
-                OutputTarget::Mapped(slot),
-            ),
-        })
     }
 
     /// Submit successful exact-incarnation activation to the represented slot.
@@ -394,11 +419,13 @@ where
     }
 
     pub(crate) fn current_activation(&self, entity_id: &EntityId<I>) -> Option<ActivationId> {
-        self.shards[self.shard_index(entity_id)]
+        let hash = self.entity_hash(entity_id);
+        self.shards[self.shard_index(hash)]
             .lock()
             .expect("directory shard lock poisoned")
-            .get(entity_id)
-            .cloned()
+            .raw_entry()
+            .from_hash(hash, |known| known == entity_id)
+            .map(|(_, slot)| Arc::clone(slot))
             .and_then(|slot| slot.activation_id())
     }
 
@@ -407,11 +434,13 @@ where
         entity_id: &EntityId<I>,
         event: SlotEvent<C, E, L>,
     ) -> DirectoryOutput<I, C, E, L> {
-        let slot = self.shards[self.shard_index(entity_id)]
+        let hash = self.entity_hash(entity_id);
+        let slot = self.shards[self.shard_index(hash)]
             .lock()
             .expect("directory shard lock poisoned")
-            .get(entity_id)
-            .cloned();
+            .raw_entry()
+            .from_hash(hash, |known| known == entity_id)
+            .map(|(_, slot)| Arc::clone(slot));
         if let Some(slot) = slot {
             let installed = slot.submit(event);
             return directory_output(
@@ -505,22 +534,27 @@ where
     }
 
     fn remove_matching(&self, entity_id: &EntityId<I>, slot: &Arc<Slot<C, E, L>>) {
-        let mut entries = self.shards[self.shard_index(entity_id)]
+        let hash = self.entity_hash(entity_id);
+        let mut entries = self.shards[self.shard_index(hash)]
             .lock()
             .expect("directory shard lock poisoned");
-        if entries
-            .get(entity_id)
-            .is_some_and(|stored| Arc::ptr_eq(stored, slot))
+        if let RawEntryMut::Occupied(entry) = entries
+            .raw_entry_mut()
+            .from_hash(hash, |known| known == entity_id)
+            && Arc::ptr_eq(entry.get(), slot)
         {
-            entries.remove(entity_id);
+            entry.remove_entry();
         }
     }
 
-    fn shard_index(&self, entity_id: &EntityId<I>) -> usize {
+    fn entity_hash(&self, entity_id: &EntityId<I>) -> u64 {
+        self.hash_builder.hash_one(entity_id)
+    }
+
+    fn shard_index(&self, hash: u64) -> usize {
         // The mask derives from the shard count, so the masked hash always
         // fits the pointer width that allocated the shards.
-        usize::try_from(self.hash_builder.hash_one(entity_id) & self.mask)
-            .expect("masked hash fits usize")
+        usize::try_from(hash & self.mask).expect("masked hash fits usize")
     }
 }
 

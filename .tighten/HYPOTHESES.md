@@ -150,3 +150,15 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   reenter the directory. Falsifier: every Hash/Eq call occurs before lock acquisition, or an effect
   interpreter callback runs with a shard guard live. Measurement: source lock-scope audit, docs,
   Clippy. Rollback: documentation-and-ledger commit.
+- H41 prehashed shard entries: KEPT (E39). Threatened invariants: stable-key equality, pointer-
+  exact removal, reentrancy, and representative performance. Workload: activating, active,
+  independent, contended, and stale directory benches plus an exact Hash-call counter. Change:
+  replace shard `std::HashMap` with `hashbrown` 0.17.1 raw entries and reuse the hash already
+  computed for shard selection across lookup/insertion/removal. Candidate: default features off,
+  `raw-entry` + `inline-more`; MIT/Apache-2.0; MSRV 1.85. Falsifier: active dispatch+resolution does
+  not reduce identifier Hash calls from four to two, any directory/runtime/loom behavior changes,
+  any retained benchmark regresses >5% on min, or audit/license/MSRV gates fail. Measurements:
+  controlled min/median of seven before/after plus full gate. Active dispatch Hash calls fell from
+  two to one (dispatch plus resolution is structurally four to two); alternating measurements show
+  about 14-16% activating/active and 13-15% contended improvements, with independent/stale minima
+  inside the 5% noise bound. Rollback: one dependency/performance commit.

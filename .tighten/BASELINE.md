@@ -65,8 +65,8 @@ Verdict: maintain-or-improve satisfied under controlled conditions.
   91.70% regions (2619/2856).
 - `checks.entity-coverage` enforces a 93.2% line floor in `nix flake check`.
 
-## Final-tree benchmark refresh (2026-08-12, aarch64-darwin M4 Pro)
-Seven repetitions; minimum and median shown. These are a dated final-tree reference,
+## Pre-E39 tree benchmark refresh (2026-08-12, aarch64-darwin M4 Pro)
+Seven repetitions; minimum and median shown. These are a dated pre-E39 reference,
 not a replacement for the controlled baseline-vs-final comparison above.
 
 | workload | min | median |
@@ -78,3 +78,19 @@ not a replacement for the controlled baseline-vs-final comparison above.
 | stale_absent_callbacks | 38.08 ms | 38.11 ms |
 | ignored_step | 14.41 ms | 14.44 ms |
 | claim_activation_step | 21.53 ms | 21.62 ms |
+
+## E39 prehashed shard lookup (2026-08-12, aarch64-darwin M4 Pro)
+Two alternating executions of already-built baseline and candidate binaries,
+seven repetitions per execution. Ranges below are the observed minima:
+
+| workload | baseline range | candidate range | outcome |
+|---|---:|---:|---:|
+| activating_hot_key | 71.21–71.60 ms | 60.06–60.23 ms | about 16% faster |
+| active_hot_key | 138.27–140.22 ms | 119.98–121.05 ms | about 13–14% faster |
+| independent_keys | 15.17–15.63 ms | 15.12–15.52 ms | noise |
+| contended_active_key | 238.61–239.93 ms | 203.98–206.87 ms | about 13–15% faster |
+| stale_absent_callbacks | 36.82–37.88 ms | 38.07–38.36 ms | within 5% noise bound |
+
+The exact counter test changes one active dispatch from two identifier `Hash`
+calls to one. The candidate reuses that single caller-computed hash for shard
+selection and the raw table lookup.

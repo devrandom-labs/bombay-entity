@@ -1,4 +1,6 @@
+use std::hash::{Hash, Hasher};
 use std::num::{NonZeroU64, NonZeroUsize};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 
@@ -67,6 +69,67 @@ impl EffectInterpreter<u64, u64, u64, u64> for Recorder {
 
 fn activation(value: u64) -> ActivationId {
     ActivationId::new(NonZeroU64::new(value).unwrap())
+}
+
+#[derive(Clone)]
+struct CountingId {
+    value: u64,
+    hashes: Arc<AtomicUsize>,
+}
+
+impl PartialEq for CountingId {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for CountingId {}
+
+impl Hash for CountingId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hashes.fetch_add(1, Ordering::Relaxed);
+        self.value.hash(state);
+    }
+}
+
+#[derive(Default)]
+struct CountingRecorder(Mutex<Option<ActivationId>>);
+
+impl EffectInterpreter<CountingId, u64, u64, u64> for CountingRecorder {
+    fn start_activation(&self, _: EntityId<CountingId>, activation_id: ActivationId) {
+        *self.0.lock().unwrap() = Some(activation_id);
+    }
+
+    fn deliver(&self, _: EntityId<CountingId>, _: ActivationId, _: DispatchId, _: u64, _: u64) {}
+    fn reject(&self, _: DispatchId, _: u64, _: Refusal) {}
+    fn enqueue_fence(&self, _: EntityId<CountingId>, _: ActivationId, _: u64) {}
+    fn retire(&self, _: EntityId<CountingId>, _: ActivationId, _: u64, _: RetirementMode) {}
+}
+
+#[test]
+fn active_dispatch_hashes_entity_once() {
+    let hashes = Arc::new(AtomicUsize::new(0));
+    let entity_id = EntityId::new(CountingId {
+        value: 1,
+        hashes: Arc::clone(&hashes),
+    });
+    let directory =
+        LocalDirectory::<CountingId, u64, u64, u64>::new(DirectoryConfig::default()).unwrap();
+    let runtime = CountingRecorder::default();
+    directory.interpret(
+        directory.dispatch(entity_id.clone(), 1).unwrap().output,
+        &runtime,
+    );
+    let activation_id = runtime.0.lock().unwrap().unwrap();
+    directory.interpret(
+        directory.activation_succeeded(&entity_id, activation_id, 1, 1),
+        &runtime,
+    );
+
+    hashes.store(0, Ordering::Relaxed);
+    let _output = directory.dispatch(entity_id, 2).unwrap();
+
+    assert_eq!(hashes.load(Ordering::Relaxed), 1);
 }
 
 #[test]

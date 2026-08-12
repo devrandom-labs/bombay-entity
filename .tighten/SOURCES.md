@@ -50,3 +50,9 @@ primary evidence. Entries are added when consulted, not anticipated.
   Representable Executable Machines,” arXiv:2307.09090 v2,
   <https://arxiv.org/abs/2307.09090>; accessed 2026-08-12. Applicability: compositional machine
   framing. Limitation: conceptual semantics, not evidence for executor or directory performance.
+- `hashbrown` 0.17.1 upstream crate metadata, documentation, and raw-entry source:
+  <https://docs.rs/hashbrown/0.17.1/hashbrown/hash_map/enum.RawEntryMut.html> and
+  <https://github.com/rust-lang/hashbrown>; accessed 2026-08-12. Applicability: raw lookup and
+  insertion with a caller-computed hash can reuse the directory's shard-selection hash; crate
+  metadata reports MIT/Apache-2.0 and MSRV 1.85. Limitation: upstream API evidence does not prove
+  a win on this repository's ownership-heavy and contended workloads; E39 benchmarks decide it.

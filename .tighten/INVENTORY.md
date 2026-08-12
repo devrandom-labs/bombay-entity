@@ -1,4 +1,11 @@
-# Workspace Inventory (2026-08-11, commit 419a979)
+# Workspace Inventory (initial 2026-08-11 snapshot; current delta below)
+
+## Current delta (E39, 2026-08-12)
+- `bombay-entity` now uses `hashbrown` 0.17.1 with default features disabled and
+  `inline-more,raw-entry` enabled. Shard tables reuse the directory hash for
+  selection and entry access; each table shares the configured build-hasher.
+- The old `std::HashMap`/DashMap replacement candidate below is historical
+  intake evidence, not the current implementation.
 
 Evidence: scout reports at agent://EntityScout, agent://KernelScout, agent://EvidenceScout
 (full pub tables with file:line). This file distills; consult artifacts before editing.
