@@ -62,8 +62,9 @@ P2 sentinels: H08 (DirectoryOutput.dispatch_id Option split), H09 (machine: Opti
 - Booleans: only predicate returns remain (5 tokens, all is_*/contains/handles-style).
 - Errors: all six failure domains thiserror-derived; core::error::Error via default-features=false.
 - no_std/MSRV: transition no_std, workspace 1.96 pinned, gate green.
-- Public surface: LifecycleModel/lifecycle_model, Choice, ActivationWaiter/DrainProgress/
-  ReservationCount removed; DispatchOutput/Passivation/DispatchOutcome added as honest types.
+- Public surface: LifecycleModel/lifecycle_model and Choice were removed;
+  ActivationWaiter/DrainProgress/ReservationCount were unexported while remaining internal;
+  DispatchOutput/Passivation/DispatchOutcome were added as honest types.
 - Performance: repeated-harness A/B in E24 entry; hot paths at parity, stale callbacks -70%.
 
 ## Convergence round 2 (2026-08-11)
@@ -123,6 +124,8 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   independent and stale minima stayed inside the 5% noise bound.
 - E39 full `check.sh` gate green: build, fmt, strict Clippy, 61/61 nextest,
   Loom, doctests, docs, audit, deny, and the 93.2% coverage floor.
+- E40 opened after the next source-first pass found residual standard-library
+  `HashMap` wording and ambiguous removed-vs-unexported historical wording.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 

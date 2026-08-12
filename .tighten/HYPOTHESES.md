@@ -162,3 +162,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   two to one (dispatch plus resolution is structurally four to two); alternating measurements show
   about 14-16% activating/active and 13-15% contended improvements, with independent/stale minima
   inside the 5% noise bound. Rollback: one dependency/performance commit.
+- H42 post-E39 documentation consistency: KEPT (E40). Threatened invariant: research and API
+  documentation identify the implementation actually shipped. Workload: every current `HashMap`
+  and public-surface claim in source docs, architecture, and loop ledgers. Change: remove residual
+  standard-library table wording and clarify historical “removed” means removed from the public
+  surface, not deleted internally. Falsifier: any current implementation claim still identifies
+  `std::collections::HashMap`, generated docs fail, or history is rewritten rather than qualified.
+  Measurement: source-first search plus workspace docs. Rollback: documentation-only commit.

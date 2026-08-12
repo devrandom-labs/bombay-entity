@@ -491,8 +491,8 @@ table change was retained only after controlled alternating benchmarks showed
 material hot-key and contention improvements without a greater-than-5% minimum
 regression in the other retained workloads.
 
-Rust 1.96 provides `Arc`, `Mutex`, `HashMap`, and lock-free `AtomicU64` on the
-supported 64-bit targets. Activation and dispatch sequences use relaxed atomic
+Rust 1.96 provides `Arc`, `Mutex`, and lock-free `AtomicU64` on the supported
+64-bit targets; `hashbrown` 0.17.1 provides the shard table. Activation and dispatch sequences use relaxed atomic
 increments because uniqueness depends only on each atomic modification order;
 slot mutexes establish the state-transition happens-before relationships.
 Sequence wrap is rejected rather than reused, preventing an ABA-like identity.

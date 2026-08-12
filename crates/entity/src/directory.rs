@@ -153,7 +153,7 @@ type Shards<I, C, E, L, S> = Box<[Shard<I, C, E, L, S>]>;
 /// Sharded local storage for authoritative per-entity lifecycle machines.
 ///
 /// Hashing and equality for [`EntityId`] keys may run while a shard lock is
-/// held as part of standard [`HashMap`] operations. Implementations of
+/// held as part of [`HashMap`] operations. Implementations of
 /// [`Hash`] and [`Eq`] for `I` must not reenter this directory. Lifecycle
 /// effect callbacks run only after directory synchronization is released.
 pub struct LocalDirectory<I, C, E, L, S = RandomState> {
