@@ -176,3 +176,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   unchanged. Falsifier: the annotation changes code generation, introduces workspace warnings, or
   cannot warn on a discarded direct reducer result. Measurement: a rustc warning probe, workspace
   tests, and all-target Clippy. Rollback: one annotation/test-evidence commit.
+- H44 prehashed callback lock scope: KEPT (E42). Threatened invariant: callers know which of
+  their identifier callbacks may run while the non-reentrant shard mutex is held. Workload: every
+  raw lookup/insertion/removal path after E39. Change: state the implemented split precisely:
+  `Hash` runs once before locking, while `Eq` runs in the raw-entry closure under the lock.
+  Falsifier: a Hash invocation remains inside a guard lifetime, equality is evaluated before the
+  guard, or any current doc still groups both under the mutex. Measurement: source lock-lifetime
+  audit, exact Hash counter, docs, and Clippy. Rollback: documentation-only commit.

@@ -140,6 +140,9 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   the required native gate and is not counted as either pass or failure; the
   native ten-check gate remains the portability evidence available here.
 - Clean counter: 1. Next pass must use an independent adversarial lens.
+- Adversarial lock-scope pass falsified the streak: E39 moved `Hash` before the
+  shard lock but residual E38/E40 wording still grouped it with in-lock `Eq`.
+  Clean counter reset to 0; E42 corrects the exact split.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 
@@ -182,7 +185,7 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   conjunction. It now isolates pointer identity, while separate stale-activation and stale-
   termination regressions prove ActivationId authority. Invariant 8 was split accordingly; targeted
   tests and Clippy green.
-- E38 kept: invariant 10 overclaimed that no application code runs under directory locks. Standard
-  HashMap lookup/insertion invokes user-defined EntityId Hash/Eq under the shard mutex; only effect
-  and runtime callbacks are guaranteed outside it. Public API and architecture now state the
-  non-reentrancy obligation; docs and Clippy green.
+- E38 kept: before E39, invariant 10 overclaimed that no application code ran under directory
+  locks. Standard HashMap lookup/insertion invoked user-defined EntityId Hash/Eq under the shard
+  mutex; only effect and runtime callbacks were guaranteed outside it. E42 records the narrower
+  post-E39 split. Public API and architecture state the applicable non-reentrancy obligation.

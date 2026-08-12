@@ -427,9 +427,10 @@ locks.
    state, and only matching slot pointer identity may remove a map entry.
 9. Caller cancellation cannot cancel shared activation or strand slot state.
 10. Lifecycle effect interpretation and actor-runtime, telemetry, clock, and
-    policy callbacks never run under directory locks. User-defined `Hash` and
-    `Eq` for the entity identifier do execute inside shard `HashMap` operations
-    and must not reenter the same directory.
+    policy callbacks never run under directory locks. User-defined `Hash` for
+    the entity identifier runs once before the shard mutex is acquired;
+    user-defined `Eq` executes inside the raw-entry operation while the mutex
+    is held and must not reenter the same directory.
 
 ## Verification strategy
 
