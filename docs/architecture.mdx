@@ -39,15 +39,16 @@ must never wrap. Exhaustion is an explicit runtime failure. Inactive entities
 are normally absent from the directory, preventing memory use from growing with
 every entity ever addressed.
 
-Each directory value is an `Arc<Slot>`. A delayed result may change or remove an
-entry only when both conditions hold:
+Each directory value is an `Arc<Slot>`. Slot pointer identity is the sole
+authority for removing a map binding: removal succeeds only while the current
+map value is the same slot allocation captured by the lifecycle effect. One
+slot allocation is never reused for another activation, so a delayed removal
+cannot delete a replacement binding.
 
-1. the current map value is the same slot allocation; and
-2. the slot still contains the same activation ID.
-
-Slot identity prevents removal after map replacement. Activation identity
-prevents delayed activation, completion, passivation, or termination events
-from affecting a newer incarnation.
+Activation identity has a separate authority inside that slot's lifecycle
+machine. It prevents delayed activation, completion, passivation, or
+termination facts from changing the state of a different incarnation. It is
+not a second map-removal condition.
 
 ## Application and incarnation ports
 

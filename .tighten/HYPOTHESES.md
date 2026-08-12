@@ -121,3 +121,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   waiters if delivery continues. Falsifier: the gated command is dropped rather than delivered, or
   the existing activation-waiter cancellation behavior changes. Measurement: both cancellation
   tests plus all-target entity Clippy. Rollback: test-and-documentation commit.
+- H37 removal authority documentation: KEPT (E35). Threatened invariant: exactly one mechanism
+  authorizes removal of the stable map binding. Workload: delayed removal racing a replacement
+  binding. Change: align the architecture identity section with `remove_matching`: activation IDs
+  classify lifecycle facts inside a slot; `Arc::ptr_eq` alone authorizes map removal because a slot
+  allocation is never reused. Falsifier: source contains an activation-ID removal check, or the
+  delayed-removal regression permits removing a replacement. Measurement: targeted regression and
+  documentation build. Rollback: documentation-and-ledger commit.

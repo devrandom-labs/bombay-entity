@@ -139,3 +139,7 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - E34 kept: a real-runtime gated-delivery test located the cancellation linearization boundary.
   Dropping during activation cancels the waiter; dropping after active delivery owns the command
   cannot retract delivery. Corrected the architecture/API overclaim; production unchanged.
+- E35 kept: fresh public-authority audit found the architecture still described a removed dual
+  removal condition. It now states the implemented split: slot pointer identity authorizes map
+  removal; ActivationId rejects stale lifecycle facts within the captured slot. Regression and
+  docs green.
