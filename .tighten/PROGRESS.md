@@ -102,3 +102,26 @@ Convergence protocol satisfied:
 - Residual known-accepted: see DEAD_ENDS.md (H32 algebra sentinel, E26 upstream block).
 
 SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
+
+## Endless-loop follow-ups (2026-08-12)
+- E31: coverage made a first-class Nix check with a measured 93.2% line floor; workspace report
+  is 93.22% (2160/2317). Added a Retiring-state characterization for dispatch rejection and stale
+  activation cleanup discovered from the coverage report.
+- E32: refreshed `docs/architecture.mdx` from the retained seven-repetition benches and linked the
+  controlled baseline comparison; repaired SOURCES.md with versions, access dates, applicability,
+  and limitations for the primary sources actually used by the loop.
+- Remaining backlog item is E26's upstream-blocked real-SUT Loom integration; no actionable local
+  hypothesis remains pending final gate and adversarial audit.
+
+## LOOP_DONE: evidence follow-up fixed point (2026-08-12)
+- Full `plugins/bombay-tighten-loop/scripts/check.sh` green: all 10 flake checks, 58/58 nextest,
+  driver real-SUT Loom, entity protocol Loom models, fmt, strict Clippy, docs/doctests, audit,
+  license/deny, build, and 93.2% coverage floor.
+- Retained benches re-measured over seven repetitions; values are recorded in BASELINE.md and the
+  architecture research basis. Hot-path results remain within the prior controlled comparison's
+  5% decision band.
+- Final source-first audit rechecked public seams, booleans, options/expect paths, allocations,
+  clones, locks, queues, dependencies, unsafe code, and documentation. It found one stale inventory
+  coverage statement, corrected in E32, and no untested actionable high-value hypothesis.
+- The only open-looking backlog entry is E26, explicitly blocked by bombay-behavior 0.9.1's lack of
+  Loom support and recorded in DEAD_ENDS.md. Completion does not claim that upstream work is done.

@@ -95,3 +95,16 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   DirectoryOutput internals. Scheduled after adversary-batch experiments.
 - H32 retire_stale outstanding_reservations: 0 sentinel (adversary finding): honest encoding
   crosses the finalized SlotEffect/RetirementMode algebra — recorded in DEAD_ENDS, not actionable.
+
+## Endless-loop evidence follow-ups (2026-08-12)
+- H33 coverage gate: KEPT (E31). Threatened invariant: verification coverage can regress while
+  the ordinary test gate remains green. Workload: all workspace tests under source-based LLVM
+  coverage. Change: make coverage a flake check at the measured 93.2% line floor and pin the
+  uncovered Retiring stale-activation cleanup path. Falsifier: the check accepts a report below
+  93.2%, the characterization test observes a different Reject/Retire sequence, or the full gate
+  fails. Measurement: 93.22% lines (2160/2317). Rollback: the flake check and test-only commit.
+- H34 research-basis measurements: KEPT (E32). Threatened invariant: published performance
+  evidence describes the final implementation. Workload: the retained directory and lifecycle
+  benches, seven repetitions. Change: replace pre-loop absolute numbers with dated final-tree
+  min/median results and link the controlled comparison. Falsifier: documentation differs from
+  raw benchmark output or BASELINE.md. Rollback: documentation-only commit.

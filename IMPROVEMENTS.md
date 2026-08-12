@@ -14,11 +14,11 @@ Concrete items only: file path + one-line acceptance criterion. Take the top ope
    under a recorded allocation ceiling. Acceptance: test fails when per-dispatch allocations
    grow; ceiling recorded in `.tighten/BASELINE.md`.
 
-3. **Coverage gate** — `flake.nix`: `packages.coverage` exists but is not a check. Add an
+3. ~~Coverage gate~~ DONE — `flake.nix`: `packages.coverage` exists but is not a check. Add an
    `entity-coverage` check running `cargoLlvmCov` with a summary threshold. Acceptance:
    `nix flake check` fails when coverage regresses below the recorded baseline.
 
-4. **Research-basis numbers** — `docs/architecture.mdx` "Research basis" cites benchmark
+4. ~~Research-basis numbers~~ DONE — `docs/architecture.mdx` "Research basis" cites benchmark
    numbers from before the tightening loop. Re-measure and refresh or mark with the
    measurement date. Acceptance: cited numbers match `.tighten/BASELINE.md` final comparison.
 
@@ -29,4 +29,5 @@ Concrete items only: file path + one-line acceptance criterion. Take the top ope
 
 ## Done
 
-(none yet)
+Items 1–4 above. Item 5 remains blocked on the named upstream prerequisite and is not an
+actionable local hypothesis.

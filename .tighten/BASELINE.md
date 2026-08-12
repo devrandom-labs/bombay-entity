@@ -59,3 +59,22 @@ Verdict: maintain-or-improve satisfied under controlled conditions.
 
 ## Allocation profile (2026-08-11, dhat)
 - active_hot_key dispatch+interpret: 0 blocks, 0 bytes per operation (pinned by crates/entity/tests/allocations.rs).
+
+## LLVM coverage (2026-08-12, Rust/LLVM 1.96.0/22.1.2)
+- Workspace tests: 93.22% lines (2160/2317), 91.27% functions (230/252),
+  91.70% regions (2619/2856).
+- `checks.entity-coverage` enforces a 93.2% line floor in `nix flake check`.
+
+## Final-tree benchmark refresh (2026-08-12, aarch64-darwin M4 Pro)
+Seven repetitions; minimum and median shown. These are a dated final-tree reference,
+not a replacement for the controlled baseline-vs-final comparison above.
+
+| workload | min | median |
+|---|---:|---:|
+| activating_hot_key | 70.68 ms | 70.82 ms |
+| active_hot_key | 138.63 ms | 138.80 ms |
+| independent_keys | 15.00 ms | 15.49 ms |
+| contended_active_key | 243.76 ms | 245.00 ms |
+| stale_absent_callbacks | 38.08 ms | 38.11 ms |
+| ignored_step | 14.41 ms | 14.44 ms |
+| claim_activation_step | 21.53 ms | 21.62 ms |

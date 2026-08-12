@@ -66,5 +66,5 @@ Evidence: scout reports at agent://EntityScout, agent://KernelScout, agent://Evi
 - Graceful retirement blocked before fence ack (invariant 6 negative direction).
 - Refusal::Busy bounded admission; FenceFailure variants; DrainPolicy::Bounded timeout.
 - ActivationId exhaustion; telemetry claims; "bounded trace test" cited in docs does not exist.
-- Miri absent (toolchain), fuzz absent (docs justify via finite alphabet + loom),
-  coverage not a gate check (packages.coverage only).
+- Miri absent (toolchain), fuzz absent (docs justify via finite alphabet + loom).
+- LLVM source coverage is a gate check as of E31: 93.22% lines measured, with a 93.2% floor.
