@@ -437,9 +437,10 @@ locks.
 The state machine, machine executor, directory, and runtime facade remain
 independent of Actorpass. Deterministic tests cover lifecycle decisions,
 command ownership, cancellation, reentrant interpretation, exact retirement,
-and the concise asynchronous API. The bounded trace test enumerates the finite
-event alphabet and compares every successor with the independent structural
-model while checking declared-edge evidence.
+and the concise asynchronous API. The bounded trace test enumerates 19
+behavior-distinct current/stale and success/failure input classes through depth
+four, comparing every successor with the independent structural model while
+checking declared-edge evidence and ignored-input cleanup effects.
 
 Five abstract Loom protocol models explore activation claim, delivery/drain
 ordering, slot-replacement removal, admission racing, and

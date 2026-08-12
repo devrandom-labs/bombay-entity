@@ -190,3 +190,12 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   E39 raw-entry paths. Falsifier: IDs alias, either delivery is lost/misrouted, removing one deletes
   the other, or the test does not fail against an intentionally equality-blind lookup. Measurement:
   targeted test plus directory suite and Clippy. Rollback: test-and-ledger commit.
+- H46 bounded-trace alphabet completeness: KEPT (E44). Threatened invariants: cancellation never
+  mutates the wrong generation, failed deliveries retain command ownership, and stale drain facts
+  cannot traverse lifecycle edges. Workload: all lifecycle event variants through depth four,
+  split into current/stale and success/failure equivalence classes where behavior differs. Change:
+  add the missing cancellation, stale-failure, failed-delivery, stale-fence, and stale-force inputs
+  to the independent bounded trace enumeration. Falsifier: evidence/structure assertions fail,
+  command-return cleanup violates the ignored-effect constraint, or runtime grows impractically.
+  Measurement: exact trace test duration, lifecycle suite, coverage, and Clippy. Rollback:
+  test-and-ledger commit.

@@ -155,6 +155,10 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   10,000 active dispatch-and-resolution operations on the E43 tree.
 - No feature, dependency, allocation, or evidence-ledger mismatch was found.
   Clean counter: 1. A different whole-workspace lens is required next.
+- The next lifecycle-evidence lens falsified that streak: E44 found the trace
+  alphabet omitted cancellation and several stale/failure ownership classes.
+  It now explores 19 equivalence classes through depth four in 0.09s. Clean
+  counter reset to 0.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 

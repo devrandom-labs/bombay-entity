@@ -485,29 +485,43 @@ mod tests {
     enum Input {
         ClaimCurrent,
         Dispatch,
+        CancelCurrent,
+        CancelStale,
         ActivationCurrent,
         ActivationStale,
         ActivationFailure,
+        ActivationFailureStale,
         DeliveryCurrent,
+        DeliveryFailedCurrent,
+        DeliveryFailedStale,
         BeginDrainCurrent,
         BeginDrainStale,
         FenceCurrent,
+        FenceStale,
         ForceCurrent,
+        ForceStale,
         TerminatedCurrent,
         TerminatedStale,
     }
 
-    const INPUTS: [Input; 12] = [
+    const INPUTS: [Input; 19] = [
         Input::ClaimCurrent,
         Input::Dispatch,
+        Input::CancelCurrent,
+        Input::CancelStale,
         Input::ActivationCurrent,
         Input::ActivationStale,
         Input::ActivationFailure,
+        Input::ActivationFailureStale,
         Input::DeliveryCurrent,
+        Input::DeliveryFailedCurrent,
+        Input::DeliveryFailedStale,
         Input::BeginDrainCurrent,
         Input::BeginDrainStale,
         Input::FenceCurrent,
+        Input::FenceStale,
         Input::ForceCurrent,
+        Input::ForceStale,
         Input::TerminatedCurrent,
         Input::TerminatedStale,
     ];
@@ -524,6 +538,14 @@ mod tests {
                 dispatch_id: dispatch(2),
                 command: 2,
             },
+            Input::CancelCurrent => SlotEvent::CancelWaiter {
+                activation_id: activation(1),
+                dispatch_id: dispatch(1),
+            },
+            Input::CancelStale => SlotEvent::CancelWaiter {
+                activation_id: activation(2),
+                dispatch_id: dispatch(1),
+            },
             Input::ActivationCurrent => SlotEvent::ActivationSucceeded {
                 activation_id: activation(1),
                 endpoint: 1,
@@ -537,9 +559,20 @@ mod tests {
             Input::ActivationFailure => SlotEvent::ActivationFailed {
                 activation_id: activation(1),
             },
+            Input::ActivationFailureStale => SlotEvent::ActivationFailed {
+                activation_id: activation(2),
+            },
             Input::DeliveryCurrent => SlotEvent::DeliveryResolved {
                 activation_id: activation(1),
                 failure: None,
+            },
+            Input::DeliveryFailedCurrent => SlotEvent::DeliveryResolved {
+                activation_id: activation(1),
+                failure: Some((dispatch(3), 3)),
+            },
+            Input::DeliveryFailedStale => SlotEvent::DeliveryResolved {
+                activation_id: activation(2),
+                failure: Some((dispatch(3), 3)),
             },
             Input::BeginDrainCurrent => SlotEvent::BeginDrain {
                 activation_id: activation(1),
@@ -550,8 +583,18 @@ mod tests {
             Input::FenceCurrent => SlotEvent::FenceAcknowledged {
                 activation_id: activation(1),
             },
+            Input::FenceStale => SlotEvent::FenceAcknowledged {
+                activation_id: activation(2),
+            },
             Input::ForceCurrent => SlotEvent::ForceDrain {
                 activation_id: activation(1),
+                failure: DrainFailure {
+                    stage: DrainStage::FenceAcknowledgement,
+                    outstanding_reservations: 0,
+                },
+            },
+            Input::ForceStale => SlotEvent::ForceDrain {
+                activation_id: activation(2),
                 failure: DrainFailure {
                     stage: DrainStage::FenceAcknowledgement,
                     outstanding_reservations: 0,
