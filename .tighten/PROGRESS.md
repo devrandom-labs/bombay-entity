@@ -125,3 +125,14 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   coverage statement, corrected in E32, and no untested actionable high-value hypothesis.
 - The only open-looking backlog entry is E26, explicitly blocked by bombay-behavior 0.9.1's lack of
   Loom support and recorded in DEAD_ENDS.md. Completion does not claim that upstream work is done.
+
+## Fresh audit round 1 (2026-08-12, active goal takeover)
+- Prior LOOP_DONE is historical evidence only; convergence counter reset.
+- Effects/panic candidate rejected by contract: interpreter panic dropping its current owned output
+  is the documented LinearizedExecutor guarantee, so retrying remaining effects would reinterpret
+  finalized panic semantics.
+- E33 kept: all seven macro-generated optional behavior-system event lanes now have field-preserving
+  characterization coverage. Targeted test and all-target entity Clippy are green; production code
+  is unchanged.
+- Next lens: concurrency and completion/cancellation interleavings, starting from real runtime code
+  rather than the abstract entity Loom protocol models.

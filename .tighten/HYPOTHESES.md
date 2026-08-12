@@ -108,3 +108,9 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   benches, seven repetitions. Change: replace pre-loop absolute numbers with dated final-tree
   min/median results and link the controlled comparison. Falsifier: documentation differs from
   raw benchmark output or BASELINE.md. Rollback: documentation-only commit.
+- H35 protocol forwarding: KEPT (E33). Threatened invariant: wrapping a behavior preserves each
+  optional system-event lane without reclassification or field loss. Workload: all seven
+  `forward_optional_event!` expansions. Change: add one exhaustive characterization test over a
+  field-preserving inner event type; production remains untouched. Falsifier: any lane returns
+  `None`, selects the wrong `EntityEvent` variant, or changes an event field. Measurement: targeted
+  protocol unit tests and coverage report. Rollback: test-and-ledger commit.
