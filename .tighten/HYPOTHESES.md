@@ -150,7 +150,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   reenter the directory. Falsifier: every Hash/Eq call occurs before lock acquisition, or an effect
   interpreter callback runs with a shard guard live. Measurement: source lock-scope audit, docs,
   Clippy. Rollback: documentation-and-ledger commit.
-- H41 prehashed shard entries: KEPT (E39). Threatened invariants: stable-key equality, pointer-
+- H41 prehashed shard entries: REJECTED AFTER FINAL VALIDATION (E39/E46). Threatened invariants: stable-key equality, pointer-
   exact removal, reentrancy, and representative performance. Workload: activating, active,
   independent, contended, and stale directory benches plus an exact Hash-call counter. Change:
   replace shard `std::HashMap` with `hashbrown` 0.17.1 raw entries and reuse the hash already
@@ -160,8 +160,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   any retained benchmark regresses >5% on min, or audit/license/MSRV gates fail. Measurements:
   controlled min/median of seven before/after plus full gate. Active dispatch Hash calls fell from
   two to one (dispatch plus resolution is structurally four to two); alternating measurements show
-  about 14-16% activating/active and 13-15% contended improvements, with independent/stale minima
-  inside the 5% noise bound. Rollback: one dependency/performance commit.
+  about 14-16% activating/active and 13-15% contended improvements in the initial run. A final
+  same-run comparison found the shipped representation 7-11% slower for independent keys; E46's
+  cached-hash refinement remained about 8% slower, so the dependency and implementation were
+  rolled back. Rollback: completed in E46.
 - H42 post-E39 documentation consistency: KEPT (E40). Threatened invariant: research and API
   documentation identify the implementation actually shipped. Workload: every current `HashMap`
   and public-surface claim in source docs, architecture, and loop ledgers. Change: remove residual
@@ -176,7 +178,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   unchanged. Falsifier: the annotation changes code generation, introduces workspace warnings, or
   cannot warn on a discarded direct reducer result. Measurement: a rustc warning probe, workspace
   tests, and all-target Clippy. Rollback: one annotation/test-evidence commit.
-- H44 prehashed callback lock scope: KEPT (E42). Threatened invariant: callers know which of
+- H44 prehashed callback lock scope: SUPERSEDED BY E46 ROLLBACK (E42). Threatened invariant: callers know which of
   their identifier callbacks may run while the non-reentrant shard mutex is held. Workload: every
   raw lookup/insertion/removal path after E39. Change: state the implemented split precisely:
   `Hash` runs once before locking, while `Eq` runs in the raw-entry closure under the lock.
@@ -187,7 +189,7 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   distinct activation ownership, and pointer-exact removal when `with_hasher` produces identical
   hashes. Workload: two unequal IDs forced into one hash bucket, activation and delivery for both,
   then exact retirement/removal of only one. Change: test-only constant-hasher regression for the
-  E39 raw-entry paths. Falsifier: IDs alias, either delivery is lost/misrouted, removing one deletes
+  directory table paths. Falsifier: IDs alias, either delivery is lost/misrouted, removing one deletes
   the other, or the test does not fail against an intentionally equality-blind lookup. Measurement:
   targeted test plus directory suite and Clippy. Rollback: test-and-ledger commit.
 - H46 bounded-trace alphabet completeness: KEPT (E44). Threatened invariants: cancellation never
@@ -208,3 +210,12 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   later input is accepted, the std regression does not kill a drain-cleanup mutation, or either
   retained Loom model fails. Measurement: repeated exact std test, cfg-Loom suite, full gate.
   Rollback: test/documentation/ledger commit.
+- H48 cached-hash table refinement: REJECTED (E46). Threatened invariants: collision-safe identity,
+  pointer-exact removal, one identifier hash per operation, and representative performance.
+  Workload: the E39 collision/hash regressions and all five retained directory benchmarks under an
+  alternating baseline/candidate schedule. Change: replace the shard `HashMap` plus shared build
+  hasher with `HashTable<(u64, EntityId, Arc<Slot>)>` so growth reuses each entry's cached full
+  hash. Falsifier: any semantic/hash-count test fails, any retained minimum is more than 5% slower
+  than the pre-E39 baseline, or the hot-path gain disappears. Measurement: targeted tests,
+  alternating seven-repetition benchmark binaries, Clippy, and full gate. Rollback: one experiment
+  commit.

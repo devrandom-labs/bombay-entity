@@ -184,7 +184,7 @@ impl EffectInterpreter<CountingId, u64, u64, u64> for CountingRecorder {
 }
 
 #[test]
-fn active_dispatch_hashes_entity_once() {
+fn active_dispatch_hashes_for_shard_and_table() {
     let hashes = Arc::new(AtomicUsize::new(0));
     let entity_id = EntityId::new(CountingId {
         value: 1,
@@ -206,7 +206,7 @@ fn active_dispatch_hashes_entity_once() {
     hashes.store(0, Ordering::Relaxed);
     let _output = directory.dispatch(entity_id, 2).unwrap();
 
-    assert_eq!(hashes.load(Ordering::Relaxed), 1);
+    assert_eq!(hashes.load(Ordering::Relaxed), 2);
 }
 
 #[test]

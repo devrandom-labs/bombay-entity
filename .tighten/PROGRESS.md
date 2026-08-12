@@ -232,3 +232,9 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   locks. Standard HashMap lookup/insertion invoked user-defined EntityId Hash/Eq under the shard
   mutex; only effect and runtime callbacks were guaranteed outside it. E42 records the narrower
   post-E39 split. Public API and architecture state the applicable non-reentrancy obligation.
+- Final alternating benchmark validation falsified E39's shipped representation: hot-key and
+  contention gains held, but independent-key minima were 7-11% slower than the same-run pre-E39
+  baseline, beyond the declared 5% decision band. Convergence is revoked and the clean counter is
+  reset to zero. E46's cached-full-hash `HashTable` refinement remained about
+  8-9% slower on independent keys, so both E39 and E46 were rolled back to the
+  standard-library table and the added dependency was removed.

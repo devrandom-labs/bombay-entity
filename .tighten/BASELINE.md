@@ -94,3 +94,13 @@ seven repetitions per execution. Ranges below are the observed minima:
 The exact counter test changes one active dispatch from two identifier `Hash`
 calls to one. The candidate reuses that single caller-computed hash for shard
 selection and the raw table lookup.
+
+## E39 final validation and rollback (2026-08-12)
+The initial candidate figures above did not reproduce for independent-key
+insertion during the final alternating run. Same-run baseline minima were
+14.97–15.45 ms versus 16.54–16.81 ms for the shipped E39 representation, a
+7–12% regression. E46 cached each full hash in a lower-level `HashTable`, but
+its independent minima were still 16.36–16.54 ms against 15.15–15.20 ms, about
+8–9% slower. Both exceed the declared 5% falsifier, so the workspace returned
+to the standard-library table and removed the added dependency. The earlier
+hot-path gains are rejected tradeoff evidence, not the final baseline.

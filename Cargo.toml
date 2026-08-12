@@ -18,7 +18,6 @@ bombay-entity = { path = "crates/entity" }
 bombay-machine-executor = { path = "crates/driver" }
 behavior = { package = "bombay-behavior", version = "0.9.1" }
 bombay-transition = { path = "crates/transition" }
-hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more", "raw-entry"] }
 thiserror = { version = "2.0.20", default-features = false }
 
 [workspace.lints.clippy]

@@ -427,10 +427,10 @@ locks.
    state, and only matching slot pointer identity may remove a map entry.
 9. Caller cancellation cannot cancel shared activation or strand slot state.
 10. Lifecycle effect interpretation and actor-runtime, telemetry, clock, and
-    policy callbacks never run under directory locks. User-defined `Hash` for
-    the entity identifier runs once before the shard mutex is acquired;
-    user-defined `Eq` executes inside the raw-entry operation while the mutex
-    is held and must not reenter the same directory.
+    policy callbacks never run under directory locks. `Hash` first selects a
+    shard before locking; user-defined `Hash` and `Eq` then execute during
+    standard-map operations while the shard mutex is held and must not reenter
+    the same directory.
 
 ## Verification strategy
 
@@ -474,10 +474,8 @@ expected to be short relative to activation, mailbox enqueue, and retirement.
 
 The implementation uses a fixed power-of-two array of
 `Mutex<HashMap<EntityId<I>, Arc<Slot>>>` shards and a separate `Mutex` in each
-slot. One hash selects the shard and is reused by `hashbrown`'s raw-entry API
-for lookup, insertion, or removal; an active dispatch therefore hashes its
-identifier once. Every shard retains the directory's configured build-hasher,
-so ordinary and prehashed operations share one hash domain. The shard lock only
+slot. The configured build-hasher first selects the shard, then the standard
+map hashes the identifier for lookup, insertion, or removal. The shard lock only
 finds, inserts, or conditionally removes an `Arc`; the slot lock only submits
 one fact to the pure lifecycle machine and installs its successor. Neither lock
 is held while an effect is interpreted. Poisoning is treated as an invariant
@@ -488,16 +486,14 @@ specialized maps. Shalev and Shavit's split-ordered lists provide lock-free
 expected-constant-time growth, and Maier, Sanders, and Dementiev demonstrate
 the importance of layout and workload when comparing concurrent hash tables.
 Those algorithms require substantially more resizing and reclamation machinery.
-`hashbrown` supplies a cache-conscious SwissTable lookup layout and a stable
-raw-entry API for caller-computed hashes, while `Arc` safely delays slot
-reclamation until every operation drops its reference. Epoch or hazard-pointer
-reclamation therefore adds no required correctness property at this stage. The
-table change was retained only after controlled alternating benchmarks showed
-material hot-key and contention improvements without a greater-than-5% minimum
-regression in the other retained workloads.
+`Arc` safely delays slot reclamation until every operation drops its reference.
+Epoch or hazard-pointer reclamation therefore adds no required correctness
+property at this stage. A prehashed `hashbrown` candidate improved hot-key and
+contention workloads but was rejected when final alternating validation found
+an independent-key regression beyond the declared 5% decision band.
 
-Rust 1.96 provides `Arc`, `Mutex`, and lock-free `AtomicU64` on the supported
-64-bit targets; `hashbrown` 0.17.1 provides the shard table. Activation and dispatch sequences use relaxed atomic
+Rust 1.96 provides `HashMap`, `Arc`, `Mutex`, and lock-free `AtomicU64` on the supported
+64-bit targets. Activation and dispatch sequences use relaxed atomic
 increments because uniqueness depends only on each atomic modification order;
 slot mutexes establish the state-transition happens-before relationships.
 Sequence wrap is rejected rather than reused, preventing an ABA-like identity.
@@ -541,8 +537,7 @@ Primary sources considered are:
 The capability check uses the Rust 1.96 documentation for
 [`std::sync`](https://doc.rust-lang.org/1.96.0/std/sync/index.html),
 [`AtomicU64`](https://doc.rust-lang.org/1.96.0/std/sync/atomic/type.AtomicU64.html),
-and [`BuildHasher`](https://doc.rust-lang.org/1.96.0/std/hash/trait.BuildHasher.html),
-plus [`hashbrown` 0.17.1 raw entries](https://docs.rs/hashbrown/0.17.1/hashbrown/hash_map/enum.RawEntryMut.html).
+and [`BuildHasher`](https://doc.rust-lang.org/1.96.0/std/hash/trait.BuildHasher.html).
 
 ### Baseline measurements
 
