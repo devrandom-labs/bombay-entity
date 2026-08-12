@@ -164,6 +164,17 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   limitation already observed in E21. E45 moves queued-receipt poison proof to
   a deterministic real-executor std regression and retains two non-panicking
   real-SUT Loom models. Clean counter remains 0.
+
+## Fresh audit round 4 (post-E45, clean #1)
+- Clean public-contract pass across exports, type-level `must_use` boundaries,
+  error/source ownership, cancellation promises, panic clauses, and current
+  documentation claims. No actionable local mismatch found.
+- E45's current-tree evidence covers seven real std executor tests, two
+  non-panicking real-SUT Loom models, and strict driver Clippy. A separate fresh
+  rustdoc/runtime command was not counted because an unrelated Cargo research
+  build left build scripts sleeping; only this session's processes were stopped.
+- Clean counter: 1. Full native Nix docs/doctests/runtime coverage remains a
+  mandatory convergence gate rather than inferred from this audit.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 
