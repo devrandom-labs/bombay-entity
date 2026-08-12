@@ -143,6 +143,9 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - Adversarial lock-scope pass falsified the streak: E39 moved `Hash` before the
   shard lock but residual E38/E40 wording still grouped it with in-lock `Eq`.
   Clean counter reset to 0; E42 corrects the exact split.
+- E43 pins the untested `with_hasher` collision seam introduced by E39: two
+  constant-hash IDs retain distinct activations/deliveries, exact removal
+  deletes only its captured slot, and an equality-blind mutation is killed.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 

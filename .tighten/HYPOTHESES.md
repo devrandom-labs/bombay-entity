@@ -183,3 +183,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   Falsifier: a Hash invocation remains inside a guard lifetime, equality is evaluated before the
   guard, or any current doc still groups both under the mutex. Measurement: source lock-lifetime
   audit, exact Hash counter, docs, and Clippy. Rollback: documentation-only commit.
+- H45 custom-hasher collision safety: KEPT (E43). Threatened invariants: stable-key equality,
+  distinct activation ownership, and pointer-exact removal when `with_hasher` produces identical
+  hashes. Workload: two unequal IDs forced into one hash bucket, activation and delivery for both,
+  then exact retirement/removal of only one. Change: test-only constant-hasher regression for the
+  E39 raw-entry paths. Falsifier: IDs alias, either delivery is lost/misrouted, removing one deletes
+  the other, or the test does not fail against an intentionally equality-blind lookup. Measurement:
+  targeted test plus directory suite and Clippy. Rollback: test-and-ledger commit.

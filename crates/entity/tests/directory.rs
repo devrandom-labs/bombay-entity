@@ -1,4 +1,4 @@
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
@@ -69,6 +69,83 @@ impl EffectInterpreter<u64, u64, u64, u64> for Recorder {
 
 fn activation(value: u64) -> ActivationId {
     ActivationId::new(NonZeroU64::new(value).unwrap())
+}
+
+#[derive(Default)]
+struct ConstantHasher;
+
+impl Hasher for ConstantHasher {
+    fn finish(&self) -> u64 {
+        0
+    }
+
+    fn write(&mut self, _: &[u8]) {}
+}
+
+#[test]
+fn custom_hasher_collisions_preserve_distinct_slots_and_exact_removal() {
+    let directory =
+        LocalDirectory::<u64, u64, u64, u64, BuildHasherDefault<ConstantHasher>>::with_hasher(
+            DirectoryConfig {
+                shards: NonZeroUsize::MIN,
+                activation_waiters: NonZeroUsize::new(2).unwrap(),
+            },
+            BuildHasherDefault::default(),
+        )
+        .unwrap();
+    let runtime = Recorder::default();
+    let first = EntityId::new(1);
+    let second = EntityId::new(2);
+
+    directory.interpret(directory.dispatch(first, 11).unwrap().output, &runtime);
+    directory.interpret(directory.dispatch(second, 22).unwrap().output, &runtime);
+    assert_eq!(directory.len(), 2);
+    let (first_activation, second_activation) = match runtime.0.lock().unwrap().as_slice() {
+        [Action::Start(first), Action::Start(second)] => (*first, *second),
+        actions => panic!("unexpected actions: {actions:?}"),
+    };
+
+    directory.interpret(
+        directory.activation_succeeded(&first, first_activation, 101, 201),
+        &runtime,
+    );
+    directory.interpret(
+        directory.activation_succeeded(&second, second_activation, 102, 202),
+        &runtime,
+    );
+    directory.interpret(
+        directory.delivery_resolved(&first, first_activation, None),
+        &runtime,
+    );
+    directory.interpret(
+        directory.delivery_resolved(&second, second_activation, None),
+        &runtime,
+    );
+    directory.interpret(directory.begin_drain(&first, first_activation), &runtime);
+    directory.interpret(
+        directory.fence_acknowledged(&first, first_activation),
+        &runtime,
+    );
+    directory.interpret(directory.terminated(&first, first_activation), &runtime);
+
+    assert_eq!(directory.len(), 1);
+    directory.interpret(directory.dispatch(second, 33).unwrap().output, &runtime);
+    let actions = runtime.0.lock().unwrap();
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, Action::Deliver(_, 11)))
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, Action::Deliver(_, 22)))
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, Action::Deliver(_, 33)))
+    );
 }
 
 #[derive(Clone)]
