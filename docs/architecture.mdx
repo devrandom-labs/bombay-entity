@@ -503,8 +503,9 @@ The directory linearization points refine the lifecycle points above:
    ordered effect queue. Follow-up facts append effects through the same path,
    so reentrancy cannot start a second interpreter.
 5. **Removal:** while holding the shard lock, removal occurs only if
-   `Arc::ptr_eq` matches the captured slot and the slot still represents the
-   requested activation identity. A caller that already cloned the old `Arc`
+   `Arc::ptr_eq` matches the captured slot. Pointer identity is the exact
+   removal authority because one slot allocation never serves a second
+   activation. A caller that already cloned the old `Arc`
    remains memory-safe but cannot mutate a replacement entry.
 
 Primary sources considered are:

@@ -573,6 +573,18 @@ mod tests {
             if let TransitionEvidence::Traversed(edge) = output.evidence {
                 assert!(edge.is_declared());
             }
+            if let TransitionEvidence::Ignored { .. } = output.evidence {
+                // An ignored input never changes state; the only effects it
+                // may emit are rejections returning owned commands.
+                assert!(
+                    output
+                        .effects
+                        .as_slice()
+                        .iter()
+                        .all(|effect| matches!(effect, SlotEffect::Reject { .. })),
+                    "ignored input produced non-reject effects"
+                );
+            }
             machine = successor;
         }
     }

@@ -51,8 +51,9 @@ enum Generation<T> {
 
 /// Identity of one dispatch operation within a slot.
 ///
-/// The field is crate-internal so integrators cannot forge correlation
-/// identities or construct the unallocated zero sentinel.
+/// The field is crate-internal and non-zero, so the unallocated zero sentinel
+/// is unrepresentable. Correlation is meaningful only for identities allocated
+/// by the directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DispatchId(pub(crate) NonZeroU64);
 
