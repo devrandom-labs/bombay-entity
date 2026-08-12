@@ -128,6 +128,18 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   `HashMap` wording and ambiguous removed-vs-unexported historical wording.
 - E41 made `Decision<S, F>` itself `must_use`, closing the direct `Reducer::reduce`
   discard seam; an exact compile-fail doctest proves the warning contract.
+
+## Fresh audit round 2 (post-E41, clean #1 candidate)
+- Clean source-first structural pass across transition topology validation,
+  no-std boundaries, protocol composition, Nix check wiring, and documentation-
+  to-test claims; no actionable local defect or unsupported claim found.
+- Focused evidence green: transition no-default-features check and five unit
+  tests, transition compile-fail doctest, and all three protocol tests.
+- An optional foreign-system `nix flake check --no-build --all-systems` probe
+  could not evaluate Linux Fenix derivations from this Darwin store. It is not
+  the required native gate and is not counted as either pass or failure; the
+  native ten-check gate remains the portability evidence available here.
+- Clean counter: 1. Next pass must use an independent adversarial lens.
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 
