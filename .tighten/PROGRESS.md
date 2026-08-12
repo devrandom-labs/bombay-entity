@@ -340,3 +340,67 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - No untested actionable high-value hypothesis emerged. Consecutive clean
   counter: 1. The next pass independently rechecks test machinery and production
   invariants rather than ledger state.
+
+## Fresh audit round 10 (post-E51, clean #2)
+- Rebuilt the verification inventory from the test binaries rather than prior
+  ledger conclusions: 17 entity unit tests, 15 real-directory integration tests,
+  10 runtime-facade tests, five protocol Loom models, two real-directory stress
+  tests, the allocation ceiling, four typed-error tests, seven executor tests,
+  five transition tests, and the `Decision` compile-fail doctest.
+- Cross-checked that inventory against every documented lifecycle phase, all 19
+  behavior-distinct event classes in the bounded trace, effect ordering and
+  ownership, generation and stable-binding authority, cancellation boundaries,
+  passivation and fence outcomes, reentrancy, poison recovery, and public error
+  ownership. Mutation evidence retained in E43 and E47-E49 demonstrates that the
+  newest facade classifications and cleanup assertions are effective.
+- The five entity Loom tests honestly model the concurrency protocols rather than
+  claiming production instrumentation. Real `LocalDirectory` substitution remains
+  blocked by the recorded upstream cfg/type incompatibility; real-directory stress
+  tests and deterministic race regressions supply the applicable in-workspace
+  evidence without weakening that limitation.
+- No untested actionable high-value hypothesis emerged. Consecutive clean counter:
+  2. The candidate fixed point now proceeds to a separate adversarial falsification
+  pass starting from source, contract, and measurements.
+
+## Final adversarial falsification pass (post-E51)
+- Started from the immutable contract, production source, public surface, and
+  current measurements rather than the clean-audit conclusions. Challenged one
+  duplicated authority, invalid representable state, caller-misuse seam,
+  unnecessary allocation/clone/lock/queue/dependency, unverified panic or
+  concurrency interleaving, replacement crate, and benchmark reversal.
+- `cargo tree --workspace --duplicates` remains empty. The complete production
+  scan has no unsafe code or lint suppression; every remaining option, vector,
+  queue, mutex, atomic, `Arc`, clone, box, and `expect` is tied to the documented
+  lifecycle algebra, affine ownership, bounded admission, executor poison
+  protocol, callback lock boundary, or measured transient-output tradeoff.
+- Seven fresh benchmark repetitions did not reverse a retained decision:
+  activating/active/independent/contended/stale minima were 54.01/102.97/13.14/
+  172.69/28.11 ms, and lifecycle ignored/claim minima were 10.72/16.16 ms.
+  Active dispatch remains guarded by the zero-allocation regression. The current
+  score is 994595 (5005 production-source lines, four boolean tokens, no custom
+  error implementations), above the 994132 intake baseline; line growth is
+  predominantly invariant verification colocated under `cfg(test)` and is not
+  treated as an optimization proxy.
+- No credible falsifier emerged. Miri remains unavailable on the pinned stable
+  toolchain; the bounded finite lifecycle alphabet plus exhaustive traces makes
+  a separate fuzz target non-actionable; real-directory Loom remains the
+  explicitly recorded upstream-cfg dead end. Proceeding to the complete Nix gate.
+
+## LOOP_DONE: fixed point restored after E51 (2026-08-12)
+- Two consecutive fresh whole-workspace audits (rounds 9 and 10) found no
+  untested actionable high-value hypothesis. A separate source-first adversarial
+  pass failed to falsify completion.
+- Fresh `cargo bench -p bombay-entity` seven-repetition measurements preserve the
+  maintain-or-improve requirement, and the zero-allocation active-dispatch test
+  remains green. Final score: 994595 versus the 994132 intake baseline.
+- `plugins/bombay-tighten-loop/scripts/check.sh` is green on exact final source:
+  release build, rustfmt, strict workspace/all-target Clippy, 66/66 nextest,
+  two real-executor Loom models, compile-fail doctest, docs, 93.2% LLVM line
+  coverage floor, RustSec audit, and cargo-deny dependency/license/source policy.
+- Applicable stress, allocation, exhaustive bounded traces, mutation evidence,
+  benchmarks, docs, audit, and license checks are complete. Miri, fuzz, and real
+  `LocalDirectory` Loom limitations remain explicitly justified above and in the
+  durable dead-end ledger rather than being represented as executed evidence.
+- The implementation-tightening loop is complete. Reopen only for a new contract,
+  changed dependency/toolchain evidence, a reproducible counterexample, or a new
+  representative benchmark that invalidates a retained decision.
