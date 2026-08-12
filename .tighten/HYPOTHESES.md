@@ -128,3 +128,11 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   allocation is never reused. Falsifier: source contains an activation-ID removal check, or the
   delayed-removal regression permits removing a replacement. Measurement: targeted regression and
   documentation build. Rollback: documentation-and-ledger commit.
+- H38 activation-cancellation observation: KEPT (E36). Threatened invariant: a command canceled
+  while waiting for activation is never delivered after that activation completes. Workload: real
+  runtime with activation held behind a gate. Change: distinguish activation start from completion
+  in the test runtime, wait for completion, then complete a subsequent valid dispatch as a witness
+  that the activation result and delivery effects were processed. Falsifier: the canceled command
+  appears beside the witness command, or the witness cannot complete. Measurement: repeated
+  targeted test plus all runtime tests. Rollback:
+  test-and-ledger commit.

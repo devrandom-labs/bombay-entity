@@ -38,6 +38,7 @@ struct TestRuntime {
 
 struct TestRuntimeState {
     activations: AtomicUsize,
+    activation_completions: AtomicUsize,
     fail_delivery: AtomicBool,
     delivered: Mutex<Vec<u64>>,
     activation_gate: Mutex<Option<Arc<ActivationGate>>>,
@@ -52,6 +53,7 @@ impl TestRuntime {
         Self {
             state: Arc::new(TestRuntimeState {
                 activations: AtomicUsize::new(0),
+                activation_completions: AtomicUsize::new(0),
                 fail_delivery: AtomicBool::new(false),
                 delivered: Mutex::new(Vec::new()),
                 activation_gate: Mutex::new(None),
@@ -83,6 +85,9 @@ impl LocalEntityRuntime<u64, u64> for TestRuntime {
         if let Some(gate) = gate {
             gate.wait().await;
         }
+        self.state
+            .activation_completions
+            .fetch_add(1, Ordering::Release);
         Ok(Activated {
             endpoint: activation_id.get().get(),
             lease: activation_id.get().get(),
@@ -207,14 +212,27 @@ fn canceling_dispatch_does_not_cancel_shared_activation_or_deliver_command() {
     drop(dispatch);
     gate.open();
     for _ in 0..100 {
-        if observations.state.activations.load(Ordering::Acquire) == 1 {
+        if observations
+            .state
+            .activation_completions
+            .load(Ordering::Acquire)
+            == 1
+        {
             break;
         }
         thread::sleep(Duration::from_millis(1));
     }
 
     assert_eq!(observations.state.activations.load(Ordering::Relaxed), 1);
-    assert!(observations.state.delivered.lock().unwrap().is_empty());
+    assert_eq!(
+        observations
+            .state
+            .activation_completions
+            .load(Ordering::Acquire),
+        1
+    );
+    block_on(entities.dispatch(EntityId::new(5), 92)).unwrap();
+    assert_eq!(*observations.state.delivered.lock().unwrap(), [92]);
 }
 
 #[test]

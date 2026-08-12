@@ -143,3 +143,8 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
   removal condition. It now states the implemented split: slot pointer identity authorizes map
   removal; ActivationId rejects stale lifecycle facts within the captured slot. Regression and
   docs green.
+- E36 kept: the activation-cancellation regression previously asserted before the gated activation
+  result necessarily reached the directory. It now observes activation return and completes a
+  later valid witness dispatch before proving only that witness was delivered. Five isolated
+  repetitions, all runtime tests, and Clippy green. The isolated target avoided interference from
+  an unrelated concurrent Cargo build in the shared target directory.
