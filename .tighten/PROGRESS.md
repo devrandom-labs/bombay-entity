@@ -189,7 +189,7 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - The loop remains active. These are completed experiments, not a convergence
   declaration; fresh whole-workspace clean-audit counting restarts after E39.
 
-## LOOP_DONE: evidence follow-up fixed point (2026-08-12)
+## Prior fixed-point declaration (2026-08-12; later reopened)
 - Full `plugins/bombay-tighten-loop/scripts/check.sh` green: all 10 flake checks, 58/58 nextest,
   driver real-SUT Loom, entity protocol Loom models, fmt, strict Clippy, docs/doctests, audit,
   license/deny, build, and 93.2% coverage floor.
@@ -321,3 +321,8 @@ SCORE: 994132 -> 994825 (formula-bounded; bool tokens 14 -> 5, all predicates).
 - No untested actionable high-value hypothesis emerged. Consecutive clean
   counter: 2. This is only a convergence candidate; a separate final
   adversarial falsification pass and complete native gate remain mandatory.
+- The final bookkeeping adversary found the older `LOOP_DONE` heading and
+  E39's last same-ID experiment status could still be read as current success
+  despite the later rollback. E51 makes the historical heading explicit, adds
+  an append-only terminal E39 rejection status, and removes the stale
+  `DEAD_ENDS` “none yet” placeholder. Clean counter resets to 0.

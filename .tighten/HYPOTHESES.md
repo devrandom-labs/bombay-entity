@@ -250,3 +250,10 @@ Rollback boundary BEFORE touching production code. One causal variable per exper
   not present in raw output, any retained minimum regresses beyond 5%, or docs still describe the
   rejected candidate as current. Measurement: two alternating seven-repetition pairs plus docs
   gate. Rollback: documentation-and-ledger commit.
+- H53 terminal-ledger consistency: KEPT (E51). Threatened invariant: fresh readers and automation
+  must not mistake a superseded fixed-point marker or an initially validated experiment for the
+  current outcome. Workload: completion markers, latest per-ID experiment status, dead-end
+  preamble, and chronological reopening text. Change: qualify the old completion heading, append
+  E39's final rejected-after-validation status, and remove the stale empty-list marker. Falsifier:
+  an unqualified `LOOP_DONE` remains, E39's latest status is successful, or the dead-end ledger
+  claims emptiness. Measurement: exact ledger searches. Rollback: ledger-only commit.
